@@ -1,0 +1,77 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-hosa-navy: #003366;
+  --color-hosa-red: #cc0000;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply m-0 min-h-screen bg-white text-slate-800;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.animate-pulse-api {
+  animation: pulse-soft 1.2s ease-in-out infinite;
+}
+
+.screen-enter {
+  animation: screenEnter 0.35s ease-out;
+}
+
+@keyframes screenEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.flip-inner {
+  perspective: 1200px;
+}
+
+.flip-card {
+  transition: transform 0.55s ease;
+  transform-style: preserve-3d;
+}
+
+.flip-card.flipped {
+  transform: rotateY(180deg);
+}
+
+.flip-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.flip-back {
+  transform: rotateY(180deg);
+}
+
+@media print {
+  /* Hide site chrome so only the cram sheet is visible */
+  body > div > header {
+    display: none !important;
+  }
+  .print\:hidden {
+    display: none !important;
+  }
+}
