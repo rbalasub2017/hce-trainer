@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react'
 import { CATEGORIES, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
-import { LoadingPulse } from '../components/LoadingPulse'
 import { EssayCoachScreen } from './EssayCoachScreen'
 import type { ChoiceKey, McQuestion, PersistedState } from '../types'
 import { pickRandom, shuffleInPlace } from '../utils/shuffle'

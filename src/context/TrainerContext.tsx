@@ -249,6 +249,7 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
       setEssayPrompt,
       setEssayDraft,
       resetAllProgress,
+      profile,
     ],
   )
 
