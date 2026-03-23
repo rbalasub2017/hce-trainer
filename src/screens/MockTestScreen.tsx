@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ChangeEvent } from 'react'
 import { CATEGORIES, DEFAULT_ESSAY_PROMPT, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
-import type { ChoiceKey, McQuestion, PersistedState } from '../types'
+import type { ChoiceKey, McQuestion } from '../types'
 import { pickRandom, shuffleInPlace } from '../utils/shuffle'
 import { categoryName } from '../prompts'
 

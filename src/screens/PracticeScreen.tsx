@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { CATEGORIES, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
 import { LoadingPulse } from '../components/LoadingPulse'
