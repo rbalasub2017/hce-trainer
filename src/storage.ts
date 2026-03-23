@@ -108,6 +108,7 @@ export function normalizeImportedQuestions(
     choices: Record<string, string>
     correct: string
     explanation: string
+    source?: string
   }>,
   categoryId: CategoryId,
 ): McQuestion[] {
