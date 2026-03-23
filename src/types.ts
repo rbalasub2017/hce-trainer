@@ -9,6 +9,7 @@ export interface McQuestion {
   choices: Record<ChoiceKey, string>
   correct: ChoiceKey
   explanation: string
+  source?: string
 }
 
 export type CategoryContentStatus = 'empty' | 'loaded' | 'generated'
@@ -32,11 +33,35 @@ export interface CategoryProgress {
   sessions: CategorySessionSnapshot[]
 }
 
+export interface QuestionResult {
+  questionId: string
+  categoryId: CategoryId
+  question: string
+  choices: Record<ChoiceKey, string>
+  correct: ChoiceKey
+  userAnswer: ChoiceKey | null  // null = skipped
+  explanation: string
+  source?: string
+}
+
+export interface EssayGrade {
+  score: number        // 1–10
+  feedback: string     // 2–3 sentence narrative
+  strengths: string[]
+  improvements: string[]
+}
+
 export interface MockTestRun {
-  date: string    // ISO timestamp
-  score: number   // overall % correct (0–100)
+  id: string           // crypto.randomUUID()
+  date: string         // ISO timestamp
+  score: number        // overall % correct (0–100)
   correct: number
   total: number
+  mode?: 'normal' | 'tough'
+  questions?: QuestionResult[]
+  essayPrompt?: string
+  essayText?: string
+  essayGrade?: EssayGrade
 }
 
 export interface PersistedState {
@@ -52,4 +77,4 @@ export interface PersistedState {
   essayDraft: string
 }
 
-export type ScreenId = 'setup' | 'practice' | 'mock' | 'essay' | 'dashboard' | 'reference'
+export type ScreenId = 'setup' | 'practice' | 'mock' | 'essay' | 'dashboard' | 'reference' | 'settings'

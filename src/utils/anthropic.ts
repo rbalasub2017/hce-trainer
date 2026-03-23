@@ -11,6 +11,7 @@ function anthropicUrl(): string {
 type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } }
 
 async function callClaudeRaw(
   apiKey: string,
@@ -72,6 +73,18 @@ export async function callClaudeWithImage(
 ): Promise<string> {
   return callClaudeRaw(apiKey, system, [
     { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
+    { type: 'text', text: textPrompt },
+  ])
+}
+
+export async function callClaudeWithDocument(
+  apiKey: string,
+  system: string,
+  docBase64: string,
+  textPrompt: string,
+): Promise<string> {
+  return callClaudeRaw(apiKey, system, [
+    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: docBase64 } },
     { type: 'text', text: textPrompt },
   ])
 }

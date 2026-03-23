@@ -12,6 +12,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/anthropic/, ''),
       },
+      '/api/db': {
+        target: 'http://localhost:3001',
+        changeOrigin: false,
+      },
     },
   },
   preview: {
@@ -20,6 +24,10 @@ export default defineConfig({
         target: 'https://api.anthropic.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/anthropic/, ''),
+      },
+      '/api/db': {
+        target: 'http://localhost:3001',
+        changeOrigin: false,
       },
     },
   },

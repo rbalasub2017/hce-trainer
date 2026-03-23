@@ -27,7 +27,6 @@ function StatusDot({ status }: { status: CategoryContentStatus }) {
 export function SetupScreen() {
   const {
     state,
-    setApiKey,
     setCategoryData,
     setQuestionsForCategory,
   } = useTrainer()
@@ -36,6 +35,8 @@ export function SetupScreen() {
   const [generating, setGenerating] = useState(false)
   const [genLabel, setGenLabel] = useState('')
   const [genMoreCatIds, setGenMoreCatIds] = useState<Set<CategoryId>>(new Set())
+  const [regenCatIds, setRegenCatIds] = useState<Set<CategoryId>>(new Set())
+  const [purgeConfirmId, setPurgeConfirmId] = useState<CategoryId | null>(null)
   const [importMsg, setImportMsg] = useState<string | null>(null)
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const importRef = useRef<HTMLInputElement | null>(null)
@@ -142,6 +143,39 @@ export function SetupScreen() {
     }
   }
 
+  const purgeCategory = (catId: CategoryId) => {
+    setQuestionsForCategory(catId, [])
+    setPurgeConfirmId(null)
+  }
+
+  const runRegenerateCategory = async (catId: CategoryId) => {
+    const key = state.apiKey.trim()
+    if (!key) {
+      setGenError('Please enter your Anthropic API key first.')
+      return
+    }
+    setGenError(null)
+    setRegenCatIds((prev) => new Set([...prev, catId]))
+    try {
+      const text = truncateMiddle(state.categories[catId].extractedText, 10000)
+      const system = buildQuestionGenerationSystem(catId, 60)
+      const userMsg = buildQuestionGenerationUser(catId, text)
+      const raw = await callClaude(key, system, userMsg)
+      const parsed = parseJsonArray<{
+        question: string
+        choices: { A: string; B: string; C: string; D: string }
+        correct: string
+        explanation: string
+      }>(raw)
+      const normalized = normalizeImportedQuestions(parsed, catId)
+      setQuestionsForCategory(catId, normalized)
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : 'Regeneration failed.')
+    } finally {
+      setRegenCatIds((prev) => { const next = new Set(prev); next.delete(catId); return next })
+    }
+  }
+
   const exportQuestions = () => {
     const payload = {
       version: 1,
@@ -210,21 +244,6 @@ export function SetupScreen() {
           Save your API key, upload textbook PDFs by category, then generate practice questions.
         </p>
       </header>
-
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
-        <label className="block text-sm font-semibold text-slate-800">Anthropic API key</label>
-        <p className="mt-1 text-xs text-slate-500">
-          Stored only in your browser (localStorage). Use the Vite dev proxy to avoid CORS issues.
-        </p>
-        <input
-          type="password"
-          autoComplete="off"
-          value={state.apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="sk-ant-api03-…"
-          className="mt-3 w-full max-w-xl rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none ring-[#003366] focus:ring-2"
-        />
-      </section>
 
       {/* ── Transfer / Offline section ─────────────────────────────────── */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
@@ -303,6 +322,7 @@ export function SetupScreen() {
           const cat = state.categories[c.id]
           const busy = extractingId === c.id
           const genMoreBusy = genMoreCatIds.has(c.id)
+          const regenBusy = regenCatIds.has(c.id)
           const qCount = cat.questions.length
           return (
             <div
@@ -354,7 +374,7 @@ export function SetupScreen() {
               {cat.pageCount > 0 && (
                 <button
                   type="button"
-                  disabled={genMoreBusy || generating}
+                  disabled={genMoreBusy || generating || regenBusy}
                   onClick={() => void runGenerateMore(c.id)}
                   className="mt-3 rounded-lg border border-[#003366] bg-white px-3 py-2 text-xs font-semibold text-[#003366] hover:bg-slate-50 disabled:opacity-50"
                 >
@@ -367,6 +387,55 @@ export function SetupScreen() {
                     '+ Generate 30 more'
                   )}
                 </button>
+              )}
+              {qCount > 0 && (
+                <div className="mt-3 border-t border-slate-100 pt-3 space-y-2">
+                  {purgeConfirmId === c.id ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-600">Delete all {qCount} questions?</span>
+                      <button
+                        type="button"
+                        onClick={() => purgeCategory(c.id)}
+                        className="rounded px-2 py-1 text-xs font-semibold text-white bg-red-600 hover:bg-red-700"
+                      >
+                        Yes, delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPurgeConfirmId(null)}
+                        className="rounded px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={regenBusy || genMoreBusy || generating}
+                      onClick={() => setPurgeConfirmId(c.id)}
+                      className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      Purge questions
+                    </button>
+                  )}
+                  {cat.extractedText.trim().length > 0 && (
+                    <button
+                      type="button"
+                      disabled={regenBusy || genMoreBusy || generating}
+                      onClick={() => void runRegenerateCategory(c.id)}
+                      className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      {regenBusy ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <span className="inline-block h-3 w-3 animate-pulse-api rounded-full border-2 border-amber-700 border-t-transparent" />
+                          Regenerating…
+                        </span>
+                      ) : (
+                        'Purge & regenerate 60 questions'
+                      )}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )

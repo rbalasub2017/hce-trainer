@@ -65,13 +65,3 @@
 .flip-back {
   transform: rotateY(180deg);
 }
-
-@media print {
-  /* Hide site chrome so only the cram sheet is visible */
-  body > div > header {
-    display: none !important;
-  }
-  .print\:hidden {
-    display: none !important;
-  }
-}

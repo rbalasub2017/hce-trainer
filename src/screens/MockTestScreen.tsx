@@ -2,9 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ChangeEvent } from 'react'
 import { CATEGORIES, DEFAULT_ESSAY_PROMPT, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
-import type { ChoiceKey, McQuestion } from '../types'
+import type { ChoiceKey, EssayGrade, McQuestion, QuestionResult } from '../types'
 import { pickRandom, shuffleInPlace } from '../utils/shuffle'
-import { categoryName } from '../prompts'
+import { categoryName, buildEssayGradingSystem, buildEssayGradingUser, parseEssayGrade } from '../prompts'
+import { callClaude, callClaudeWithImage } from '../utils/anthropic'
+import { saveRunToBackend, patchRunEssayGrade } from '../utils/db'
 
 const MOCK_SECONDS = 60 * 60       // 60 min — HOSA SLC standard (MC + essay)
 const MOCK_TOTAL = 35               // 35 MC questions
@@ -82,17 +84,191 @@ function MockResultsChart({
   )
 }
 
+// ── Per-question result row ────────────────────────────────────────────────────
+function QuestionResultRow({
+  qr,
+  index,
+  forceExpand,
+}: {
+  qr: QuestionResult
+  index: number
+  forceExpand: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const isOpen = forceExpand || expanded
+  const answered = qr.userAnswer !== null
+  const correct = answered && qr.userAnswer === qr.correct
+
+  const rowBg = correct
+    ? 'border-emerald-200 bg-emerald-50/60'
+    : answered
+      ? 'border-red-200 bg-red-50/50'
+      : 'border-slate-200 bg-slate-50'
+
+  return (
+    <div className={`rounded-lg border ${rowBg} overflow-hidden`}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-3 px-3 py-2 text-left"
+      >
+        <span
+          className={`w-5 shrink-0 text-center text-base font-bold ${
+            correct ? 'text-emerald-600' : answered ? 'text-red-600' : 'text-slate-400'
+          }`}
+        >
+          {correct ? '✓' : answered ? '✗' : '—'}
+        </span>
+        <span className="flex-1 text-sm text-slate-800 line-clamp-1">
+          <span className="mr-1 font-semibold text-slate-500">{index + 1}.</span>
+          {qr.question}
+        </span>
+        <span className="shrink-0 text-xs text-slate-400 hidden sm:inline">
+          {categoryName(qr.categoryId)}
+        </span>
+        <svg
+          className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div className="border-t border-slate-200 px-3 pb-3 pt-2">
+          <p className="mb-2 text-sm font-medium text-slate-900">{qr.question}</p>
+          <div className="space-y-1.5">
+            {(['A', 'B', 'C', 'D'] as const).map((k) => {
+              const isCorrectChoice = k === qr.correct
+              const isUserChoice = k === qr.userAnswer
+              const wrongUserChoice = isUserChoice && !isCorrectChoice
+              return (
+                <div
+                  key={k}
+                  className={`flex items-start gap-2 rounded px-2.5 py-1.5 text-sm ${
+                    isCorrectChoice
+                      ? 'bg-emerald-100 text-emerald-900 font-medium'
+                      : wrongUserChoice
+                        ? 'bg-red-100 text-red-900 font-medium'
+                        : 'text-slate-600'
+                  }`}
+                >
+                  <span className="shrink-0 font-bold">{k}.</span>
+                  <span className="flex-1">{qr.choices[k]}</span>
+                  {isCorrectChoice && (
+                    <span className="ml-auto shrink-0 text-xs font-semibold text-emerald-700">Correct</span>
+                  )}
+                  {wrongUserChoice && (
+                    <span className="ml-auto shrink-0 text-xs font-semibold text-red-700">Your answer</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {qr.explanation && (
+            <div className="mt-3 rounded-md bg-white/80 px-3 py-2 text-sm leading-relaxed text-slate-700 ring-1 ring-slate-200">
+              <p>
+                <span className="font-semibold text-[#003366]">Explanation: </span>
+                {qr.explanation}
+              </p>
+              {qr.source && (
+                <p className="mt-1.5 text-xs text-slate-500">
+                  <span className="font-semibold">Source: </span>
+                  {qr.source}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Essay Grade Panel ──────────────────────────────────────────────────────────
+function EssayGradePanel({
+  grade,
+  loading,
+  error,
+}: {
+  grade: EssayGrade | null
+  loading: boolean
+  error: string | null
+}) {
+  if (loading) {
+    return (
+      <div className="mt-4 flex items-center gap-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        <svg className="h-4 w-4 shrink-0 animate-spin text-[#003366]" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+        </svg>
+        Grading essay with AI…
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        Essay grading failed: {error}
+      </div>
+    )
+  }
+  if (!grade) return null
+
+  const scoreColor =
+    grade.score >= 8 ? 'text-emerald-700' : grade.score >= 6 ? 'text-amber-600' : 'text-red-700'
+  const scoreBg =
+    grade.score >= 8 ? 'bg-emerald-50 border-emerald-200' : grade.score >= 6 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'
+
+  return (
+    <div className={`mt-4 rounded-xl border p-4 ${scoreBg}`}>
+      <div className="flex items-center gap-3">
+        <span className={`text-3xl font-extrabold tabular-nums ${scoreColor}`}>{grade.score}/10</span>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI Essay Grade</p>
+          <p className="text-sm text-slate-700">{grade.feedback}</p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Strengths</p>
+          <ul className="mt-1 space-y-1">
+            {grade.strengths.map((s, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-sm text-slate-700">
+                <span className="mt-0.5 shrink-0 text-emerald-600">✓</span> {s}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">To improve</p>
+          <ul className="mt-1 space-y-1">
+            {grade.improvements.map((s, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-sm text-slate-700">
+                <span className="mt-0.5 shrink-0 text-amber-600">→</span> {s}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main screen ────────────────────────────────────────────────────────────────
 type Phase = 'idle' | 'active' | 'done'
 type View = 'mc' | 'essay'
 
 export function MockTestScreen() {
   const {
+    activeProfile,
     state,
     recordMockResults,
     addPracticeTime,
     addQuestionsAnswered,
     setMockHighScore,
     addMockTestRun,
+    updateMockTestRun,
   } = useTrainer()
 
   const [toughMode, setToughMode] = useState(false)
@@ -118,14 +294,24 @@ export function MockTestScreen() {
   // ── Essay state ───────────────────────────────────────────────────────────
   const [essayDraft, setEssayDraft] = useState('')
   const [essayPrompt] = useState(state.essayPrompt.trim() || DEFAULT_ESSAY_PROMPT)
-  const [uploadedImage, setUploadedImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
+  const [uploadedImage, setUploadedImage] = useState<{ base64: string; mediaType: string; preview: string; isPdf: boolean; fileName: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Refs for finalize ─────────────────────────────────────────────────────
+  // ── Results state ─────────────────────────────────────────────────────────
+  const [mockQuestionResults, setMockQuestionResults] = useState<QuestionResult[]>([])
+  const [allExpanded, setAllExpanded] = useState(false)
+  const [essayGrade, setEssayGrade] = useState<EssayGrade | null>(null)
+  const [gradingEssay, setGradingEssay] = useState(false)
+  const [gradeEssayError, setGradeEssayError] = useState<string | null>(null)
+
+  // ── Refs ──────────────────────────────────────────────────────────────────
   const paperRef = useRef(mockPaper)
   const answersRef = useRef(mockAnswers)
   const startRef = useRef(startTime)
   const essayDraftRef = useRef(essayDraft)
+  const uploadedImageRef = useRef(uploadedImage)
+  const apiKeyRef = useRef(state.apiKey)
+  const activeProfileRef = useRef(activeProfile)
   const gradingDoneRef = useRef(false)
 
   useLayoutEffect(() => {
@@ -133,9 +319,13 @@ export function MockTestScreen() {
     answersRef.current = mockAnswers
     startRef.current = startTime
     essayDraftRef.current = essayDraft
+    uploadedImageRef.current = uploadedImage
+    apiKeyRef.current = state.apiKey
+    activeProfileRef.current = activeProfile
   })
 
-  const finalize = useCallback(() => {
+  // ── Finalize (async — essay grading runs in background) ───────────────────
+  const finalize = useCallback(async () => {
     if (gradingDoneRef.current) return
     const paper = paperRef.current
     const answers = answersRef.current
@@ -145,26 +335,89 @@ export function MockTestScreen() {
     const byCat = {} as Record<CategoryId, { correct: number; attempted: number }>
     for (const c of CATEGORIES) byCat[c.id] = { correct: 0, attempted: 0 }
     let totalCorrect = 0
-    for (const q of paper) {
-      const ok = answers[q.id] === q.correct
+
+    const questionResults: QuestionResult[] = paper.map((q) => {
+      const userAnswer = (answers[q.id] ?? null) as ChoiceKey | null
+      const ok = userAnswer === q.correct
       if (ok) totalCorrect++
       byCat[q.categoryId].attempted++
       if (ok) byCat[q.categoryId].correct++
-    }
+      return {
+        questionId: q.id,
+        categoryId: q.categoryId,
+        question: q.question,
+        choices: q.choices,
+        correct: q.correct,
+        userAnswer,
+        explanation: q.explanation,
+        source: q.source,
+      }
+    })
+
     const total = paper.length
     const pct = total ? Math.round((totalCorrect / total) * 100) : 0
-    setMockByCategory(byCat)
-    recordMockResults(byCat)
-    addQuestionsAnswered(total)
     const maxSec = paper.length > MOCK_TOTAL ? TOUGH_MOCK_SECONDS : MOCK_SECONDS
     const elapsed = startRef.current
       ? Math.min(maxSec, Math.round((Date.now() - startRef.current) / 1000))
       : 0
+
+    setMockByCategory(byCat)
+    setMockQuestionResults(questionResults)
+    recordMockResults(byCat)
+    addQuestionsAnswered(total)
     addPracticeTime(elapsed)
     setMockHighScore(pct)
-    addMockTestRun({ date: new Date().toISOString(), score: pct, correct: totalCorrect, total })
+
+    const runId = crypto.randomUUID()
+    const runDate = new Date().toISOString()
+    const essayTextRaw = essayDraftRef.current.trim()
+    const image = uploadedImageRef.current
+    const hasEssay = !!(essayTextRaw || image)
+
+    const run = {
+      id: runId,
+      date: runDate,
+      score: pct,
+      correct: totalCorrect,
+      total,
+      mode: (paper.length > MOCK_TOTAL ? 'tough' : 'normal') as 'normal' | 'tough',
+      questions: questionResults,
+      essayPrompt: hasEssay ? essayPrompt : undefined,
+      essayText: essayTextRaw || undefined,
+    }
+    addMockTestRun(run)
     setPhase('done')
-  }, [recordMockResults, addQuestionsAnswered, addPracticeTime, setMockHighScore, addMockTestRun])
+
+    // Grade essay in background if submitted
+    const apiKey = apiKeyRef.current
+    const profile = activeProfileRef.current
+    if (hasEssay && apiKey) {
+      setGradingEssay(true)
+      try {
+        const sys = buildEssayGradingSystem()
+        const userMsg = buildEssayGradingUser(
+          essayPrompt,
+          essayTextRaw || '[Student submitted a handwritten essay — see image]',
+        )
+        const raw = image
+          ? await callClaudeWithImage(apiKey, sys, image.base64, image.mediaType, userMsg)
+          : await callClaude(apiKey, sys, userMsg)
+        const grade = parseEssayGrade(raw)
+        setEssayGrade(grade)
+        updateMockTestRun(runId, { essayGrade: grade })
+        await saveRunToBackend({ ...run, essayGrade: grade }, profile)
+        await patchRunEssayGrade(runId, grade)
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Essay grading failed'
+        setGradeEssayError(msg)
+        await saveRunToBackend(run, profile)
+      } finally {
+        setGradingEssay(false)
+      }
+    } else {
+      await saveRunToBackend(run, profile)
+    }
+  }, [recordMockResults, addQuestionsAnswered, addPracticeTime, setMockHighScore, addMockTestRun, updateMockTestRun, essayPrompt])
 
   // ── Timer ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -177,19 +430,20 @@ export function MockTestScreen() {
 
   useEffect(() => {
     if (phase !== 'active' || remaining > 0) return
-    queueMicrotask(() => finalize())
+    queueMicrotask(() => { void finalize() })
   }, [phase, remaining, finalize])
 
   // ── Handwritten upload ────────────────────────────────────────────────────
   const handleImageUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    const isPdf = file.type === 'application/pdf'
     const reader = new FileReader()
     reader.onload = () => {
       const dataUrl = reader.result as string
       const [header, base64] = dataUrl.split(',')
-      const mediaType = header.replace('data:', '').replace(';base64', '')
-      setUploadedImage({ base64, mediaType, preview: dataUrl })
+      const mediaType = header!.replace('data:', '').replace(';base64', '')
+      setUploadedImage({ base64: base64!, mediaType, preview: dataUrl, isPdf, fileName: file.name })
     }
     reader.readAsDataURL(file)
   }
@@ -226,6 +480,11 @@ export function MockTestScreen() {
     setEssayDraft('')
     setUploadedImage(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
+    setMockQuestionResults([])
+    setEssayGrade(null)
+    setGradingEssay(false)
+    setGradeEssayError(null)
+    setAllExpanded(false)
     setView('mc')
     setPhase('active')
   }
@@ -235,6 +494,11 @@ export function MockTestScreen() {
     setMockPaper([])
     setMockIdx(0)
     setMockAnswers({})
+    setMockQuestionResults([])
+    setEssayGrade(null)
+    setGradingEssay(false)
+    setGradeEssayError(null)
+    setAllExpanded(false)
     gradingDoneRef.current = false
   }
 
@@ -248,6 +512,11 @@ export function MockTestScreen() {
       : remaining <= 300
         ? 'bg-amber-500'
         : 'bg-[#003366]'
+
+  // ── Summary stats for done phase ──────────────────────────────────────────
+  const totalCorrect = mockQuestionResults.filter((q) => q.userAnswer === q.correct).length
+  const total = mockQuestionResults.length
+  const pct = total ? Math.round((totalCorrect / total) * 100) : 0
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -394,7 +663,7 @@ export function MockTestScreen() {
                 </button>
                 <button
                   type="button"
-                  onClick={finalize}
+                  onClick={() => { void finalize() }}
                   className="rounded-lg bg-[#CC0000] px-4 py-1.5 text-sm font-semibold text-white hover:bg-[#b30000]"
                 >
                   Submit Test
@@ -491,7 +760,16 @@ export function MockTestScreen() {
                 <div>
                   {uploadedImage ? (
                     <div className="relative rounded-lg border border-slate-200 bg-slate-50 p-2">
-                      <img src={uploadedImage.preview} alt="Uploaded handwritten essay" className="max-h-64 w-full rounded object-contain" />
+                      {uploadedImage.isPdf ? (
+                        <div className="flex items-center gap-3 rounded p-3">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                          </svg>
+                          <span className="text-sm font-medium text-slate-700">{uploadedImage.fileName}</span>
+                        </div>
+                      ) : (
+                        <img src={uploadedImage.preview} alt="Uploaded handwritten essay" className="max-h-64 w-full rounded object-contain" />
+                      )}
                       <button
                         type="button"
                         onClick={clearImage}
@@ -506,11 +784,11 @@ export function MockTestScreen() {
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                       </svg>
-                      <span>Upload a photo of your handwritten essay <span className="text-slate-400">(JPG, PNG, HEIC)</span></span>
+                      <span>Upload your handwritten essay <span className="text-slate-400">(JPG, PNG, HEIC, PDF)</span></span>
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept="image/*"
+                        accept="image/*,application/pdf"
                         className="sr-only"
                         onChange={handleImageUpload}
                       />
@@ -539,50 +817,85 @@ export function MockTestScreen() {
 
         {/* ── Done ──────────────────────────────────────────────────────── */}
         {phase === 'done' && (
-          <div>
-            <h3 className="text-lg font-semibold text-slate-900">Results</h3>
-            <p className="mt-2 text-slate-700">
-              Multiple Choice:{' '}
-              {(() => {
-                let c = 0
-                let t = 0
-                for (const q of mockPaper) {
-                  t++
-                  if (mockAnswers[q.id] === q.correct) c++
-                }
-                return (
-                  <span className="font-bold text-[#003366]">
-                    {c}/{t} ({t ? Math.round((c / t) * 100) : 0}%)
-                  </span>
-                )
-              })()}
-            </p>
+          <div className="space-y-6">
+            {/* ── Score banner ── */}
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">Results</h3>
+              <p className="text-slate-700">
+                Multiple Choice:{' '}
+                <span className="font-bold text-[#003366]">
+                  {totalCorrect}/{total} ({pct}%)
+                </span>
+              </p>
+            </div>
 
             <MockResultsChart byCategory={mockByCategory} />
 
-            {uploadedImage ? (
-              <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-                <h4 className="font-semibold text-[#003366]">Your Essay</h4>
-                <p className="mt-1 text-xs text-slate-500">{essayPrompt}</p>
-                <img src={uploadedImage.preview} alt="Submitted handwritten essay" className="mt-3 max-h-96 w-full rounded object-contain" />
-                <p className="mt-2 text-center text-xs text-slate-500">Handwritten essay — includes legibility in scoring.</p>
+            {/* ── Question-by-question review ── */}
+            {mockQuestionResults.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white">
+                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                  <h4 className="font-semibold text-[#003366]">
+                    Question Review
+                    <span className="ml-2 text-sm font-normal text-slate-500">
+                      {mockQuestionResults.filter((q) => q.userAnswer === q.correct).length}/{mockQuestionResults.length} correct
+                    </span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setAllExpanded((v) => !v)}
+                    className="text-xs font-medium text-[#003366] hover:underline"
+                  >
+                    {allExpanded ? 'Collapse all' : 'Expand all'}
+                  </button>
+                </div>
+                <div className="space-y-1 p-3">
+                  {mockQuestionResults.map((qr, i) => (
+                    <QuestionResultRow
+                      key={qr.questionId}
+                      qr={qr}
+                      index={i}
+                      forceExpand={allExpanded}
+                    />
+                  ))}
+                </div>
               </div>
-            ) : essayDraft.trim() ? (
-              <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-                <h4 className="font-semibold text-[#003366]">Your Essay</h4>
+            )}
+
+            {/* ── Essay section ── */}
+            {(essayDraft.trim() || uploadedImage) ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <h4 className="font-semibold text-[#003366]">Essay</h4>
                 <p className="mt-1 text-xs text-slate-500">{essayPrompt}</p>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
-                  {essayDraft}
-                </p>
+                {uploadedImage ? (
+                  <>
+                    {uploadedImage.isPdf ? (
+                      <div className="mt-3 flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                        </svg>
+                        <span className="text-sm font-medium text-slate-700">{uploadedImage.fileName}</span>
+                      </div>
+                    ) : (
+                      <img src={uploadedImage.preview} alt="Submitted handwritten essay" className="mt-3 max-h-96 w-full rounded object-contain" />
+                    )}
+                    <p className="mt-2 text-center text-xs text-slate-500">Handwritten — legibility included in grading.</p>
+                  </>
+                ) : (
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
+                    {essayDraft}
+                  </p>
+                )}
+                <EssayGradePanel grade={essayGrade} loading={gradingEssay} error={gradeEssayError} />
               </div>
             ) : (
-              <p className="mt-4 text-sm italic text-slate-500">No essay was submitted.</p>
+              <p className="text-sm italic text-slate-500">No essay was submitted.</p>
             )}
 
             <button
               type="button"
               onClick={reset}
-              className="mt-6 rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#002952]"
+              className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#002952]"
             >
               Back to start
             </button>

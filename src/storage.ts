@@ -1,5 +1,9 @@
-import { CATEGORIES, STORAGE_KEY, type CategoryId } from './constants'
+import { CATEGORIES, GLOBAL_API_KEY_STORAGE_KEY, STORAGE_KEY, type CategoryId, type ProfileId } from './constants'
 import type { CategoryPersisted, CategoryProgress, McQuestion, PersistedState } from './types'
+
+function profileKey(profile: ProfileId): string {
+  return `${STORAGE_KEY}:${profile}`
+}
 
 function emptyCategory(): CategoryPersisted {
   return {
@@ -35,9 +39,11 @@ export function defaultPersistedState(): PersistedState {
   }
 }
 
-export function loadState(): PersistedState {
+export function loadState(profile: ProfileId): PersistedState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    // Prefer profile-scoped key; fall back to legacy key only for Shyam (migration)
+    const raw = localStorage.getItem(profileKey(profile))
+      ?? (profile === 'Shyam' ? localStorage.getItem(STORAGE_KEY) : null)
     if (!raw) return defaultPersistedState()
     const parsed = JSON.parse(raw) as Partial<PersistedState>
     const base = defaultPersistedState()
@@ -59,18 +65,37 @@ export function loadState(): PersistedState {
         sessions: parsed.categoryProgress?.[c.id]?.sessions ?? [],
       }
     }
-    merged.mockTestHistory = parsed.mockTestHistory ?? []
+    merged.mockTestHistory = (parsed.mockTestHistory ?? []).map((r) => ({
+      ...r,
+      // Backfill id for runs created before this field was added
+      id: r.id ?? crypto.randomUUID(),
+    }))
     merged.starredQuestionIds = parsed.starredQuestionIds ?? []
     merged.essayPrompt = parsed.essayPrompt ?? ''
     merged.essayDraft = parsed.essayDraft ?? ''
+    // Always read the API key from the shared global key.
+    // Migrate legacy per-profile key on first load if the global key isn't set yet.
+    const globalKey = loadGlobalApiKey()
+    if (!globalKey && parsed.apiKey) {
+      saveGlobalApiKey(parsed.apiKey)
+    }
+    merged.apiKey = loadGlobalApiKey()
     return merged
   } catch {
     return defaultPersistedState()
   }
 }
 
-export function saveState(state: PersistedState): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+export function saveState(profile: ProfileId, state: PersistedState): void {
+  localStorage.setItem(profileKey(profile), JSON.stringify(state))
+}
+
+export function loadGlobalApiKey(): string {
+  return localStorage.getItem(GLOBAL_API_KEY_STORAGE_KEY) ?? ''
+}
+
+export function saveGlobalApiKey(key: string): void {
+  localStorage.setItem(GLOBAL_API_KEY_STORAGE_KEY, key)
 }
 
 export function makeQuestionId(): string {
@@ -103,6 +128,7 @@ export function normalizeImportedQuestions(
       choices,
       correct,
       explanation: q.explanation ?? '',
+      source: q.source ? String(q.source) : undefined,
     }
   })
 }

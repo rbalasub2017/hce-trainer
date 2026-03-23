@@ -5,8 +5,7 @@ import { LoadingPulse } from '../components/LoadingPulse'
 import { EssayCoachScreen } from './EssayCoachScreen'
 import type { ChoiceKey, McQuestion, PersistedState } from '../types'
 import { pickRandom, shuffleInPlace } from '../utils/shuffle'
-import { categoryName, buildCramSheetSystem, buildCramSheetUser } from '../prompts'
-import { callClaude } from '../utils/anthropic'
+import { categoryName } from '../prompts'
 
 const ADAPTIVE_MIN_ATTEMPTS = 10
 
@@ -102,6 +101,7 @@ export function PracticeScreen() {
     const ok = v && (v === 'weakest' || CATEGORIES.some((c) => c.id === v))
     return ok ? v : 'health-informatics'
   })
+  const [drillCount, setDrillCount] = useState(5)
   const [drillBatch, setDrillBatch] = useState<McQuestion[]>([])
   const [drillAnswers, setDrillAnswers] = useState<Partial<Record<string, ChoiceKey>>>({})
   const [drillChecked, setDrillChecked] = useState(false)
@@ -122,13 +122,13 @@ export function PracticeScreen() {
       window.alert('This category has no questions yet.')
       return
     }
-    const batch = pickRandom(pool, 5)
+    const batch = pickRandom(pool, drillCount)
     setDrillCategoryId(cat)
     setDrillBatch(batch)
     setDrillAnswers({})
     setDrillChecked(false)
     setDrillStart(Date.now())
-  }, [drillSelect, state.categories, state.categoryProgress, hasQuestions])
+  }, [drillSelect, drillCount, state.categories, state.categoryProgress, hasQuestions])
 
   const submitDrillCheck = () => {
     if (!drillCategoryId || !drillBatch.length) return
@@ -219,48 +219,10 @@ export function PracticeScreen() {
     advanceAdaptiveQueue()
   }, [adaptiveSessionTotal, advanceAdaptiveQueue])
 
-  // ── Cram Sheet state ──────────────────────────────────────────────────────
-
-  const [cramContent, setCramContent] = useState<string | null>(null)
-  const [cramLoading, setCramLoading] = useState(false)
-  const [cramError, setCramError] = useState<string | null>(null)
-
-  const generateCramSheet = useCallback(async () => {
-    const key = state.apiKey.trim()
-    if (!key) {
-      window.alert('Add your Anthropic API key on the Setup screen first.')
-      return
-    }
-    setCramLoading(true)
-    setCramError(null)
-    try {
-      const categoriesText = CATEGORIES.map((c) => ({
-        name: c.name,
-        text: state.categories[c.id].extractedText,
-      }))
-      const result = await callClaude(
-        key,
-        buildCramSheetSystem(),
-        buildCramSheetUser(categoriesText),
-      )
-      setCramContent(result.trim())
-    } catch (e) {
-      setCramError(e instanceof Error ? e.message : 'Request failed.')
-    } finally {
-      setCramLoading(false)
-    }
-  }, [state.apiKey, state.categories])
-
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-8">
-      {cramLoading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[1px]">
-          <LoadingPulse label="Generating cram sheet…" />
-        </div>
-      )}
-
       <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between print:hidden">
         <div>
           <h2 className="text-2xl font-bold text-[#003366]">Practice</h2>
@@ -320,12 +282,24 @@ export function PracticeScreen() {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-800">Questions</label>
+              <select
+                value={drillCount}
+                onChange={(e) => setDrillCount(Number(e.target.value))}
+                className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none ring-[#003366] focus:ring-2"
+              >
+                {[5, 10, 15, 20].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
             <button
               type="button"
               onClick={startDrill}
               className="rounded-lg bg-[#CC0000] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#b30000]"
             >
-              Load 5 questions
+              Load {drillCount} questions
             </button>
           </div>
 
@@ -378,10 +352,18 @@ export function PracticeScreen() {
                     ))}
                   </div>
                   {drillChecked && (
-                    <p className="mt-3 text-sm text-slate-700">
-                      <span className="font-semibold text-[#003366]">Explanation: </span>
-                      {q.explanation}
-                    </p>
+                    <div className="mt-3 text-sm text-slate-700">
+                      <p>
+                        <span className="font-semibold text-[#003366]">Explanation: </span>
+                        {q.explanation}
+                      </p>
+                      {q.source && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          <span className="font-semibold">Source: </span>
+                          {q.source}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}
@@ -585,10 +567,18 @@ export function PracticeScreen() {
                   ))}
                 </div>
                 {adaptivePhase === 'answered' && (
-                  <p className="mt-3 text-sm text-slate-700">
-                    <span className="font-semibold text-[#003366]">Explanation: </span>
-                    {currentAdaptiveQ.explanation}
-                  </p>
+                  <div className="mt-3 text-sm text-slate-700">
+                    <p>
+                      <span className="font-semibold text-[#003366]">Explanation: </span>
+                      {currentAdaptiveQ.explanation}
+                    </p>
+                    {currentAdaptiveQ.source && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        <span className="font-semibold">Source: </span>
+                        {currentAdaptiveQ.source}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -627,63 +617,6 @@ export function PracticeScreen() {
       {/* ── Essay Coach ──────────────────────────────────────────────────────── */}
       {practiceMode === 'essay' && <EssayCoachScreen />}
 
-      {/* ── Cram Sheet Generator ────────────────────────────────────────────── */}
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6 print:shadow-none">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between print:hidden">
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">Cram Sheet Generator</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Claude reads all 10 categories' PDF content and produces a 1-page bullet-point cheat
-              sheet of the most testable facts.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void generateCramSheet()}
-            disabled={cramLoading}
-            className="shrink-0 rounded-lg bg-[#CC0000] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#b30000] disabled:opacity-50"
-          >
-            Generate Cram Sheet
-          </button>
-        </div>
-
-        {cramError && (
-          <div className="mt-4 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 print:hidden">
-            <span className="flex-1">{cramError}</span>
-            <button
-              type="button"
-              onClick={() => setCramError(null)}
-              className="rounded-md bg-white px-3 py-1.5 text-red-700 ring-1 ring-red-200"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        {cramContent && (
-          <div className="mt-6">
-            <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm leading-relaxed text-slate-800 whitespace-pre-wrap print:border-none print:p-0 print:text-base">
-              {cramContent}
-            </div>
-            <div className="mt-4 flex gap-3 print:hidden">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#002952]"
-              >
-                Print
-              </button>
-              <button
-                type="button"
-                onClick={() => setCramContent(null)}
-                className="rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
     </div>
   )
 }

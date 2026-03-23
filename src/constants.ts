@@ -1,4 +1,13 @@
 export const STORAGE_KEY = 'hce_trainer_v1'
+export const ACTIVE_PROFILE_KEY = 'hce_trainer_active_profile'
+export const GLOBAL_API_KEY_STORAGE_KEY = 'hce_trainer_api_key'
+
+export const PROFILES = [
+  { id: 'Shyam', label: 'Shyam' },
+  { id: 'Parent', label: 'Parent' },
+  { id: 'test', label: 'Test' },
+] as const
+export type ProfileId = (typeof PROFILES)[number]['id']
 
 export const CATEGORIES = [
   { id: 'health-informatics', name: 'Health Informatics' },

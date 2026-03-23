@@ -7,12 +7,15 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { CategoryId } from '../constants'
+import type { CategoryId, ProfileId } from '../constants'
 import { CATEGORIES } from '../constants'
-import { loadState, saveState, defaultPersistedState } from '../storage'
+export const PARENT_PROFILE_ID: ProfileId = 'Parent'
+import { loadState, saveState, saveGlobalApiKey, defaultPersistedState } from '../storage'
 import type { CategoryPersisted, McQuestion, MockTestRun, PersistedState } from '../types'
+import { fetchQuestionsFromServer, saveQuestionsToServer } from '../utils/db'
 
 type TrainerContextValue = {
+  activeProfile: ProfileId
   state: PersistedState
   setApiKey: (key: string) => void
   setCategoryData: (id: CategoryId, patch: Partial<CategoryPersisted>) => void
@@ -23,6 +26,7 @@ type TrainerContextValue = {
   addQuestionsAnswered: (n: number) => void
   setMockHighScore: (pct: number) => void
   addMockTestRun: (run: MockTestRun) => void
+  updateMockTestRun: (id: string, patch: Partial<MockTestRun>) => void
   toggleStar: (questionId: string) => void
   setEssayPrompt: (s: string) => void
   setEssayDraft: (s: string) => void
@@ -49,14 +53,45 @@ function pushSession(
   }
 }
 
-export function TrainerProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<PersistedState>(() => loadState())
+export function TrainerProvider({ profile, children }: { profile: ProfileId; children: ReactNode }) {
+  const [state, setState] = useState<PersistedState>(() => loadState(profile))
 
   useEffect(() => {
-    saveState(state)
-  }, [state])
+    saveState(profile, state)
+  }, [profile, state])
+
+  // On mount: sync with the shared server question bank.
+  //   Parent  → push local questions up (Parent is the source of truth for content)
+  //   Student → always pull from server (stay in sync with whatever Parent has published)
+  // Runs once per profile switch; localStorage stays as offline fallback.
+  useEffect(() => {
+    const isParent = profile === PARENT_PROFILE_ID
+    const snapshot = loadState(profile)
+    for (const cat of CATEGORIES) {
+      const local = snapshot.categories[cat.id]
+      if (isParent) {
+        // Parent: push any questions they have so students can access them
+        if (local.status !== 'empty' && local.questions.length > 0) {
+          void saveQuestionsToServer(cat.id, local.questions)
+        }
+      } else {
+        // Student: always pull from server — picks up new questions Parent generates
+        fetchQuestionsFromServer(cat.id).then((questions) => {
+          if (!questions) return
+          setState((s) => ({
+            ...s,
+            categories: {
+              ...s.categories,
+              [cat.id]: { ...s.categories[cat.id], questions, status: 'generated' },
+            },
+          }))
+        })
+      }
+    }
+  }, [profile]) // re-run when profile switches
 
   const setApiKey = useCallback((apiKey: string) => {
+    saveGlobalApiKey(apiKey)
     setState((s) => ({ ...s, apiKey }))
   }, [])
 
@@ -82,6 +117,7 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
         },
       },
     }))
+    if (questions.length > 0) void saveQuestionsToServer(id, questions)
   }, [])
 
   const recordDrillSession = useCallback((id: CategoryId, correct: number, attempted: number) => {
@@ -139,6 +175,15 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  const updateMockTestRun = useCallback((id: string, patch: Partial<MockTestRun>) => {
+    setState((s) => ({
+      ...s,
+      mockTestHistory: s.mockTestHistory.map((r) =>
+        r.id === id ? { ...r, ...patch } : r,
+      ),
+    }))
+  }, [])
+
   const toggleStar = useCallback((questionId: string) => {
     setState((s) => {
       const set = new Set(s.starredQuestionIds)
@@ -171,6 +216,7 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({
+      activeProfile: profile,
       state,
       setApiKey,
       setCategoryData,
@@ -181,6 +227,7 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
       addQuestionsAnswered,
       setMockHighScore,
       addMockTestRun,
+      updateMockTestRun,
       toggleStar,
       setEssayPrompt,
       setEssayDraft,
@@ -197,6 +244,7 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
       addQuestionsAnswered,
       setMockHighScore,
       addMockTestRun,
+      updateMockTestRun,
       toggleStar,
       setEssayPrompt,
       setEssayDraft,
