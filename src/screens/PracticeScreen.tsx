@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { CATEGORIES, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
 import { EssayCoachScreen } from './EssayCoachScreen'
+import { EssayGraderScreen } from './EssayGraderScreen'
 import type { ChoiceKey, McQuestion, PersistedState } from '../types'
 import { pickRandom, shuffleInPlace } from '../utils/shuffle'
 import { categoryName } from '../prompts'
@@ -84,7 +85,7 @@ export function PracticeScreen() {
     addQuestionsAnswered,
   } = useTrainer()
 
-  const [practiceMode, setPracticeMode] = useState<'drill' | 'adaptive' | 'essay'>('drill')
+  const [practiceMode, setPracticeMode] = useState<'drill' | 'adaptive' | 'essay-coach' | 'essay-grader'>('drill')
 
   const hasQuestions = useCallback(
     (id: CategoryId) => state.categories[id].questions.length > 0,
@@ -226,7 +227,7 @@ export function PracticeScreen() {
         <div>
           <h2 className="text-2xl font-bold text-[#003366]">Practice</h2>
           <p className="mt-1 text-slate-600">
-            Category drills, adaptive practice, or essay coaching.
+            Category drills, adaptive practice, or essay training.
           </p>
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
@@ -252,12 +253,21 @@ export function PracticeScreen() {
           </button>
           <button
             type="button"
-            onClick={() => setPracticeMode('essay')}
+            onClick={() => setPracticeMode('essay-coach')}
             className={`rounded-md px-4 py-2 text-sm font-semibold ${
-              practiceMode === 'essay' ? 'bg-[#003366] text-white' : 'text-slate-700 hover:bg-slate-50'
+              practiceMode === 'essay-coach' ? 'bg-[#003366] text-white' : 'text-slate-700 hover:bg-slate-50'
             }`}
           >
             Essay Coach
+          </button>
+          <button
+            type="button"
+            onClick={() => setPracticeMode('essay-grader')}
+            className={`rounded-md px-4 py-2 text-sm font-semibold ${
+              practiceMode === 'essay-grader' ? 'bg-[#003366] text-white' : 'text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            Essay Grader
           </button>
         </div>
       </header>
@@ -614,7 +624,10 @@ export function PracticeScreen() {
       )}
 
       {/* ── Essay Coach ──────────────────────────────────────────────────────── */}
-      {practiceMode === 'essay' && <EssayCoachScreen />}
+      {practiceMode === 'essay-coach' && <EssayCoachScreen />}
+
+      {/* ── Essay Grader ─────────────────────────────────────────────────────── */}
+      {practiceMode === 'essay-grader' && <EssayGraderScreen />}
 
     </div>
   )

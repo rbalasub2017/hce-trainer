@@ -89,6 +89,41 @@ export async function callClaudeWithDocument(
   ])
 }
 
+export type ChatMessage = { role: 'user' | 'assistant'; content: string }
+
+export async function callClaudeMessages(
+  apiKey: string,
+  system: string,
+  messages: ChatMessage[],
+): Promise<string> {
+  const res = await fetch(anthropicUrl(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 4096,
+      system,
+      messages,
+    }),
+  })
+  const raw = await res.text()
+  if (!res.ok) {
+    let detail = raw
+    try {
+      const j = JSON.parse(raw) as { error?: { message?: string } }
+      detail = j.error?.message ?? raw
+    } catch { /* use raw */ }
+    throw new Error(detail || `HTTP ${res.status}`)
+  }
+  const data = JSON.parse(raw) as { content: Array<{ type: string; text?: string }> }
+  return data.content.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('')
+}
+
 /** Strip markdown code fences if the model wrapped JSON. */
 export function parseJsonArray<T>(raw: string): T[] {
   let s = raw.trim()
