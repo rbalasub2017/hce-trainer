@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CATEGORIES } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
-import type { CategoryProgress } from '../types'
+import type { CategoryProgress, MockTestRun } from '../types'
 
 function pct(p: CategoryProgress): number {
   return p.attempted > 0 ? Math.round((p.correct / p.attempted) * 100) : 0
@@ -70,6 +70,45 @@ function RadarChart({ values }: { values: number[] }) {
       ))}
       {axis}
       <polygon fill="rgba(0,51,102,0.2)" stroke="#003366" strokeWidth={2} points={poly} />
+    </svg>
+  )
+}
+
+function MockHistoryChart({ runs }: { runs: MockTestRun[] }) {
+  const w = 480, h = 140, padL = 36, padR = 12, padT = 16, padB = 24
+  const innerW = w - padL - padR
+  const innerH = h - padT - padB
+  const n = runs.length
+
+  const points = runs.map((r, i) => ({
+    x: padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW),
+    y: padT + innerH - (r.score / 100) * innerH,
+    run: r,
+  }))
+  const polyline = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-auto w-full" role="img" aria-label="Mock test score history">
+      {[25, 50, 75, 100].map((v) => {
+        const y = padT + innerH - (v / 100) * innerH
+        return (
+          <g key={v}>
+            <line x1={padL} y1={y} x2={w - padR} y2={y} stroke="#e2e8f0" strokeWidth={1} />
+            <text x={padL - 4} y={y} textAnchor="end" dominantBaseline="middle" className="fill-slate-400 text-[9px]">
+              {v}%
+            </text>
+          </g>
+        )
+      })}
+      {n > 1 && <polyline points={polyline} fill="none" stroke="#003366" strokeWidth={2} strokeLinejoin="round" />}
+      {points.map((p, i) => (
+        <g key={i}>
+          <circle cx={p.x} cy={p.y} r={4} fill={p.run.score === Math.max(...runs.map((r) => r.score)) ? '#CC0000' : '#003366'} />
+          <text x={p.x} y={p.y - 7} textAnchor="middle" className="fill-slate-600 text-[9px]">
+            {p.run.score}%
+          </text>
+        </g>
+      ))}
     </svg>
   )
 }
@@ -144,6 +183,40 @@ export function DashboardScreen() {
           </ul>
         </div>
       </section>
+
+      {state.mockTestHistory.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
+          <h3 className="text-sm font-semibold text-[#003366]">Mock test history</h3>
+          <p className="mt-0.5 text-xs text-slate-500">{state.mockTestHistory.length} run{state.mockTestHistory.length !== 1 ? 's' : ''} — best score highlighted in red</p>
+          <div className="mt-4">
+            <MockHistoryChart runs={state.mockTestHistory} />
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-left text-xs">
+              <thead className="border-b border-slate-100 text-slate-500">
+                <tr>
+                  <th className="pb-2 pr-6 font-medium">Date</th>
+                  <th className="pb-2 pr-6 font-medium">Score</th>
+                  <th className="pb-2 font-medium">Correct / Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...state.mockTestHistory].reverse().map((r, i) => (
+                  <tr key={i} className="border-b border-slate-50 last:border-0">
+                    <td className="py-1.5 pr-6 text-slate-600">
+                      {new Date(r.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </td>
+                    <td className={`py-1.5 pr-6 font-semibold ${r.score === state.mockTestHighScore ? 'text-[#CC0000]' : 'text-slate-800'}`}>
+                      {r.score}%
+                    </td>
+                    <td className="py-1.5 text-slate-600">{r.correct}/{r.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <table className="min-w-full text-left text-sm">

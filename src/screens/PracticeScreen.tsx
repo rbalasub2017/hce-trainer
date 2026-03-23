@@ -1,39 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { CATEGORIES, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
 import { LoadingPulse } from '../components/LoadingPulse'
+import { EssayCoachScreen } from './EssayCoachScreen'
 import type { ChoiceKey, McQuestion, PersistedState } from '../types'
 import { pickRandom, shuffleInPlace } from '../utils/shuffle'
 import { categoryName, buildCramSheetSystem, buildCramSheetUser } from '../prompts'
 import { callClaude } from '../utils/anthropic'
 
-const MOCK_SECONDS = 60 * 60
-const MOCK_TOTAL = 35
 const ADAPTIVE_MIN_ATTEMPTS = 10
-
-// ── Mock helpers ──────────────────────────────────────────────────────────────
-
-function mockDistribution(): number[] {
-  const counts = Array.from({ length: 10 }, () => 3)
-  const extra = MOCK_TOTAL - 30
-  const order = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-  shuffleInPlace(order)
-  for (let i = 0; i < extra; i++) counts[order[i]!] += 1
-  return counts
-}
-
-function buildMockPaper(byCategory: Record<CategoryId, McQuestion[]>): McQuestion[] {
-  const dist = mockDistribution()
-  const out: McQuestion[] = []
-  CATEGORIES.forEach((c, idx) => {
-    const need = dist[idx]!
-    const pool = byCategory[c.id]
-    const picked = pickRandom(pool, need)
-    out.push(...picked)
-  })
-  shuffleInPlace(out)
-  return out
-}
 
 function weakestCategoryId(
   progress: PersistedState['categoryProgress'],
@@ -51,12 +26,6 @@ function weakestCategoryId(
   const fallback = CATEGORIES.map((c) => c.id).filter(hasQuestions)
   if (!fallback.length) return null
   return fallback[Math.floor(Math.random() * fallback.length)]!
-}
-
-function formatTime(sec: number): string {
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
 // ── Adaptive helpers ──────────────────────────────────────────────────────────
@@ -107,63 +76,17 @@ function weakestInStats(stats: AdaptiveStats): CategoryId | null {
   return worst?.id ?? null
 }
 
-// ── MockResultsChart ──────────────────────────────────────────────────────────
-
-function MockResultsChart({
-  byCategory,
-}: {
-  byCategory: Record<CategoryId, { correct: number; attempted: number }>
-}) {
-  const rows = CATEGORIES.map((c) => {
-    const r = byCategory[c.id]
-    const pct = r.attempted ? Math.round((r.correct / r.attempted) * 100) : 0
-    return { id: c.id, name: c.name, pct, attempted: r.attempted }
-  })
-  return (
-    <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-      <h4 className="font-semibold text-[#003366]">Score by category</h4>
-      <svg
-        viewBox="0 0 640 220"
-        className="mt-4 h-auto w-full"
-        role="img"
-        aria-label="Bar chart of percent correct per category"
-      >
-        {rows.map((row, i) => {
-          const barW = 52
-          const gap = 8
-          const x = 16 + i * (barW + gap)
-          const h = (row.pct / 100) * 120
-          const y = 140 - h
-          return (
-            <g key={row.id}>
-              <rect x={x} y={y} width={barW} height={h} fill="#003366" rx={4} opacity={0.9} />
-              <text x={x + barW / 2} y={158} textAnchor="middle" className="fill-slate-600 text-[9px]">
-                {row.pct}%
-              </text>
-              <text x={x + barW / 2} y={178} textAnchor="middle" className="fill-slate-500 text-[8px]">
-                {row.name.length > 12 ? `${row.name.slice(0, 10)}…` : row.name}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
-    </div>
-  )
-}
-
 // ── PracticeScreen ────────────────────────────────────────────────────────────
 
 export function PracticeScreen() {
   const {
     state,
     recordDrillSession,
-    recordMockResults,
     addPracticeTime,
     addQuestionsAnswered,
-    setMockHighScore,
   } = useTrainer()
 
-  const [practiceMode, setPracticeMode] = useState<'drill' | 'mock' | 'adaptive'>('drill')
+  const [practiceMode, setPracticeMode] = useState<'drill' | 'adaptive' | 'essay'>('drill')
 
   const hasQuestions = useCallback(
     (id: CategoryId) => state.categories[id].questions.length > 0,
@@ -220,102 +143,6 @@ export function PracticeScreen() {
     recordDrillSession(drillCategoryId, correct, drillBatch.length)
   }
 
-  // ── Mock state ────────────────────────────────────────────────────────────
-
-  const [mockPhase, setMockPhase] = useState<'idle' | 'running' | 'done'>('idle')
-  const [mockPaper, setMockPaper] = useState<McQuestion[]>([])
-  const [mockIdx, setMockIdx] = useState(0)
-  const [mockAnswers, setMockAnswers] = useState<Partial<Record<string, ChoiceKey>>>({})
-  const [mockRemaining, setMockRemaining] = useState(MOCK_SECONDS)
-  const [mockByCategory, setMockByCategory] = useState<
-    Record<CategoryId, { correct: number; attempted: number }>
-  >(() => {
-    const z = {} as Record<CategoryId, { correct: number; attempted: number }>
-    for (const c of CATEGORIES) z[c.id] = { correct: 0, attempted: 0 }
-    return z
-  })
-  const [mockStart, setMockStart] = useState<number | null>(null)
-
-  const mockPaperRef = useRef(mockPaper)
-  const mockAnswersRef = useRef(mockAnswers)
-  const mockStartRef = useRef(mockStart)
-  const mockPhaseRef = useRef(mockPhase)
-  const gradingDoneRef = useRef(false)
-
-  useLayoutEffect(() => {
-    mockPaperRef.current = mockPaper
-    mockAnswersRef.current = mockAnswers
-    mockStartRef.current = mockStart
-    mockPhaseRef.current = mockPhase
-  })
-
-  const finalizeMock = useCallback(() => {
-    if (gradingDoneRef.current) return
-    const paper = mockPaperRef.current
-    const answers = mockAnswersRef.current
-    if (!paper.length || mockPhaseRef.current !== 'running') return
-    gradingDoneRef.current = true
-
-    const byCat = {} as Record<CategoryId, { correct: number; attempted: number }>
-    for (const c of CATEGORIES) byCat[c.id] = { correct: 0, attempted: 0 }
-    let totalCorrect = 0
-    for (const q of paper) {
-      const ok = answers[q.id] === q.correct
-      if (ok) totalCorrect++
-      const cid = q.categoryId
-      byCat[cid].attempted++
-      if (ok) byCat[cid].correct++
-    }
-    const total = paper.length
-    const pct = total ? Math.round((totalCorrect / total) * 100) : 0
-    setMockByCategory(byCat)
-    recordMockResults(byCat)
-    addQuestionsAnswered(total)
-    const start = mockStartRef.current
-    const elapsed = start ? Math.min(MOCK_SECONDS, Math.round((Date.now() - start) / 1000)) : 0
-    addPracticeTime(elapsed)
-    setMockHighScore(pct)
-    setMockPhase('done')
-  }, [recordMockResults, addQuestionsAnswered, addPracticeTime, setMockHighScore])
-
-  const startMock = () => {
-    const byCat = {} as Record<CategoryId, McQuestion[]>
-    for (const c of CATEGORIES) byCat[c.id] = state.categories[c.id].questions
-    const allHave = CATEGORIES.every((c) => byCat[c.id].length >= 3)
-    if (!allHave) {
-      window.alert(
-        'You need at least 3 questions per category for a balanced mock. Generate more in Setup.',
-      )
-      return
-    }
-    gradingDoneRef.current = false
-    const paper = buildMockPaper(byCat)
-    setMockPaper(paper)
-    setMockIdx(0)
-    setMockAnswers({})
-    setMockRemaining(MOCK_SECONDS)
-    setMockPhase('running')
-    setMockStart(Date.now())
-    const empty = {} as Record<CategoryId, { correct: number; attempted: number }>
-    for (const c of CATEGORIES) empty[c.id] = { correct: 0, attempted: 0 }
-    setMockByCategory(empty)
-  }
-
-  useEffect(() => {
-    if (mockPhase !== 'running') return
-    const id = window.setInterval(() => {
-      setMockRemaining((r) => (r <= 0 ? 0 : r - 1))
-    }, 1000)
-    return () => window.clearInterval(id)
-  }, [mockPhase])
-
-  useEffect(() => {
-    if (mockPhase !== 'running' || mockRemaining > 0) return
-    queueMicrotask(() => finalizeMock())
-  }, [mockPhase, mockRemaining, finalizeMock])
-
-  const currentMock = mockPaper[mockIdx]
-  const mockProgress = mockPaper.length ? ((mockIdx + 1) / mockPaper.length) * 100 : 0
 
   // ── Adaptive state ────────────────────────────────────────────────────────
 
@@ -438,7 +265,7 @@ export function PracticeScreen() {
         <div>
           <h2 className="text-2xl font-bold text-[#003366]">Practice</h2>
           <p className="mt-1 text-slate-600">
-            Category drills, adaptive practice, or a full timed mock exam.
+            Category drills, adaptive practice, or essay coaching.
           </p>
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
@@ -464,12 +291,12 @@ export function PracticeScreen() {
           </button>
           <button
             type="button"
-            onClick={() => setPracticeMode('mock')}
+            onClick={() => setPracticeMode('essay')}
             className={`rounded-md px-4 py-2 text-sm font-semibold ${
-              practiceMode === 'mock' ? 'bg-[#003366] text-white' : 'text-slate-700 hover:bg-slate-50'
+              practiceMode === 'essay' ? 'bg-[#003366] text-white' : 'text-slate-700 hover:bg-slate-50'
             }`}
           >
-            Full Mock Test
+            Essay Coach
           </button>
         </div>
       </header>
@@ -560,13 +387,26 @@ export function PracticeScreen() {
               ))}
               <div className="flex flex-wrap gap-3">
                 {!drillChecked ? (
-                  <button
-                    type="button"
-                    onClick={submitDrillCheck}
-                    className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#002952]"
-                  >
-                    Check Answers
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={submitDrillCheck}
+                      className="rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#002952]"
+                    >
+                      Check Answers
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDrillBatch([])
+                        setDrillAnswers({})
+                        setDrillChecked(false)
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                  </>
                 ) : (
                   <button
                     type="button"
@@ -784,143 +624,8 @@ export function PracticeScreen() {
         </section>
       )}
 
-      {/* ── Full Mock Test ──────────────────────────────────────────────────── */}
-      {practiceMode === 'mock' && (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6 print:hidden">
-          {mockPhase === 'idle' && (
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">Full mock test</h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  {MOCK_TOTAL} questions (3–4 per category), {MOCK_SECONDS / 60} minutes, no
-                  feedback until the end.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={startMock}
-                className="rounded-lg bg-[#CC0000] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#b30000]"
-              >
-                Start Mock Test
-              </button>
-            </div>
-          )}
-
-          {mockPhase === 'running' && currentMock && (
-            <div>
-              <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
-                  <div
-                    className="h-full rounded-full bg-[#003366] transition-all duration-300"
-                    style={{ width: `${mockProgress}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-4 sm:justify-end">
-                  <span className="text-sm font-medium text-slate-700">
-                    Question {mockIdx + 1} of {mockPaper.length}
-                  </span>
-                  <span className="rounded-lg bg-[#003366] px-3 py-1.5 font-mono text-sm font-bold text-white tabular-nums">
-                    {formatTime(mockRemaining)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-4">
-                <p className="font-medium text-slate-900">{currentMock.question}</p>
-                <p className="mt-1 text-xs text-slate-500">{categoryName(currentMock.categoryId)}</p>
-                <div className="mt-4 space-y-2">
-                  {(['A', 'B', 'C', 'D'] as const).map((k) => (
-                    <label
-                      key={k}
-                      className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                    >
-                      <input
-                        type="radio"
-                        className="mt-1"
-                        name={currentMock.id}
-                        checked={mockAnswers[currentMock.id] === k}
-                        onChange={() =>
-                          setMockAnswers((prev) => ({
-                            ...prev,
-                            [currentMock.id]: k,
-                          }))
-                        }
-                      />
-                      <span>
-                        <span className="font-semibold text-[#003366]">{k}.</span>{' '}
-                        {currentMock.choices[k]}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-6 flex flex-wrap justify-between gap-3">
-                <button
-                  type="button"
-                  disabled={mockIdx === 0}
-                  onClick={() => setMockIdx((i) => Math.max(0, i - 1))}
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-40"
-                >
-                  Previous
-                </button>
-                {mockIdx < mockPaper.length - 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => setMockIdx((i) => i + 1)}
-                    className="rounded-lg bg-[#003366] px-5 py-2 text-sm font-semibold text-white hover:bg-[#002952]"
-                  >
-                    Next
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => finalizeMock()}
-                    className="rounded-lg bg-[#CC0000] px-5 py-2 text-sm font-semibold text-white hover:bg-[#b30000]"
-                  >
-                    Submit test
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {mockPhase === 'done' && (
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Results</h3>
-              <p className="mt-2 text-slate-700">
-                Overall:{' '}
-                {(() => {
-                  let c = 0
-                  let t = 0
-                  for (const q of mockPaper) {
-                    t++
-                    if (mockAnswers[q.id] === q.correct) c++
-                  }
-                  return (
-                    <span className="font-bold text-[#003366]">
-                      {c}/{t} ({t ? Math.round((c / t) * 100) : 0}%)
-                    </span>
-                  )
-                })()}
-              </p>
-              <MockResultsChart byCategory={mockByCategory} />
-              <button
-                type="button"
-                onClick={() => {
-                  setMockPhase('idle')
-                  setMockPaper([])
-                  setMockIdx(0)
-                  setMockAnswers({})
-                }}
-                className="mt-6 rounded-lg bg-[#003366] px-5 py-2.5 text-sm font-semibold text-white"
-              >
-                Back to start
-              </button>
-            </div>
-          )}
-        </section>
-      )}
+      {/* ── Essay Coach ──────────────────────────────────────────────────────── */}
+      {practiceMode === 'essay' && <EssayCoachScreen />}
 
       {/* ── Cram Sheet Generator ────────────────────────────────────────────── */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6 print:shadow-none">

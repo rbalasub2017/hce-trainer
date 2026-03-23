@@ -32,11 +32,19 @@ export interface CategoryProgress {
   sessions: CategorySessionSnapshot[]
 }
 
+export interface MockTestRun {
+  date: string    // ISO timestamp
+  score: number   // overall % correct (0–100)
+  correct: number
+  total: number
+}
+
 export interface PersistedState {
   apiKey: string
   categories: Record<CategoryId, CategoryPersisted>
   categoryProgress: Record<CategoryId, CategoryProgress>
   mockTestHighScore: number
+  mockTestHistory: MockTestRun[]
   totalPracticeSeconds: number
   totalQuestionsAnswered: number
   starredQuestionIds: string[]
@@ -44,4 +52,4 @@ export interface PersistedState {
   essayDraft: string
 }
 
-export type ScreenId = 'setup' | 'practice' | 'essay' | 'dashboard' | 'reference'
+export type ScreenId = 'setup' | 'practice' | 'mock' | 'essay' | 'dashboard' | 'reference'

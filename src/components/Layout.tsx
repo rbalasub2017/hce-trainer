@@ -4,7 +4,7 @@ import type { ScreenId } from '../types'
 const NAV: { id: ScreenId; label: string }[] = [
   { id: 'setup', label: 'Setup' },
   { id: 'practice', label: 'Practice' },
-  { id: 'essay', label: 'Essay Coach' },
+  { id: 'mock', label: 'Full Mock Test' },
   { id: 'dashboard', label: 'Progress Dashboard' },
   { id: 'reference', label: 'Quick Reference' },
 ]

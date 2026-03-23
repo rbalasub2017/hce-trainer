@@ -3,7 +3,7 @@ import { Layout } from './components/Layout'
 import { TrainerProvider } from './context/TrainerContext'
 import { SetupScreen } from './screens/SetupScreen'
 import { PracticeScreen } from './screens/PracticeScreen'
-import { EssayCoachScreen } from './screens/EssayCoachScreen'
+import { MockTestScreen } from './screens/MockTestScreen'
 import { DashboardScreen } from './screens/DashboardScreen'
 import { QuickReferenceScreen } from './screens/QuickReferenceScreen'
 import type { ScreenId } from './types'
@@ -25,7 +25,7 @@ function AppShell() {
     <Layout screen={screen} onNavigate={setScreen}>
       {screen === 'setup' && <SetupScreen />}
       {screen === 'practice' && <PracticeScreen />}
-      {screen === 'essay' && <EssayCoachScreen />}
+      {screen === 'mock' && <MockTestScreen />}
       {screen === 'dashboard' && <DashboardScreen />}
       {screen === 'reference' && <QuickReferenceScreen />}
     </Layout>

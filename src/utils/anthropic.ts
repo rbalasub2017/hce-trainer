@@ -8,10 +8,14 @@ function anthropicUrl(): string {
   return 'https://api.anthropic.com/v1/messages'
 }
 
-export async function callClaude(
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+async function callClaudeRaw(
   apiKey: string,
   system: string,
-  userMessage: string,
+  content: string | ContentBlock[],
 ): Promise<string> {
   const res = await fetch(anthropicUrl(), {
     method: 'POST',
@@ -23,9 +27,9 @@ export async function callClaude(
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 8192,
+      max_tokens: 32000,
       system,
-      messages: [{ role: 'user', content: userMessage }],
+      messages: [{ role: 'user', content }],
     }),
   })
 
@@ -49,6 +53,27 @@ export async function callClaude(
     .map((b) => b.text ?? '')
     .join('')
   return text
+}
+
+export async function callClaude(
+  apiKey: string,
+  system: string,
+  userMessage: string,
+): Promise<string> {
+  return callClaudeRaw(apiKey, system, userMessage)
+}
+
+export async function callClaudeWithImage(
+  apiKey: string,
+  system: string,
+  imageBase64: string,
+  mediaType: string,
+  textPrompt: string,
+): Promise<string> {
+  return callClaudeRaw(apiKey, system, [
+    { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
+    { type: 'text', text: textPrompt },
+  ])
 }
 
 /** Strip markdown code fences if the model wrapped JSON. */

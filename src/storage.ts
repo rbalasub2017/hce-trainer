@@ -26,6 +26,7 @@ export function defaultPersistedState(): PersistedState {
     categories,
     categoryProgress,
     mockTestHighScore: 0,
+    mockTestHistory: [],
     totalPracticeSeconds: 0,
     totalQuestionsAnswered: 0,
     starredQuestionIds: [],
@@ -58,6 +59,7 @@ export function loadState(): PersistedState {
         sessions: parsed.categoryProgress?.[c.id]?.sessions ?? [],
       }
     }
+    merged.mockTestHistory = parsed.mockTestHistory ?? []
     merged.starredQuestionIds = parsed.starredQuestionIds ?? []
     merged.essayPrompt = parsed.essayPrompt ?? ''
     merged.essayDraft = parsed.essayDraft ?? ''

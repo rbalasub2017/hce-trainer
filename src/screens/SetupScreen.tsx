@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef, useState, type ChangeEvent } from 'react'
 import { CATEGORIES, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
 import { LoadingPulse } from '../components/LoadingPulse'
@@ -35,7 +35,10 @@ export function SetupScreen() {
   const [genError, setGenError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [genLabel, setGenLabel] = useState('')
+  const [genMoreCatIds, setGenMoreCatIds] = useState<Set<CategoryId>>(new Set())
+  const [importMsg, setImportMsg] = useState<string | null>(null)
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const importRef = useRef<HTMLInputElement | null>(null)
 
   const onPickFiles = useCallback(
     async (catId: CategoryId, files: FileList | null) => {
@@ -76,21 +79,29 @@ export function SetupScreen() {
     }
     setGenError(null)
     setGenerating(true)
+    setGenLabel(`Generating questions for ${targets.length} categor${targets.length === 1 ? 'y' : 'ies'} concurrently… (60 questions each)`)
     try {
-      for (const c of targets) {
-        setGenLabel(`Generating questions for ${categoryName(c.id)}…`)
-        const text = truncateMiddle(state.categories[c.id].extractedText, 6000)
-        const system = buildQuestionGenerationSystem(c.id)
-        const userMsg = buildQuestionGenerationUser(c.id, text)
-        const raw = await callClaude(key, system, userMsg)
-        const parsed = parseJsonArray<{
-          question: string
-          choices: { A: string; B: string; C: string; D: string }
-          correct: string
-          explanation: string
-        }>(raw)
-        const normalized = normalizeImportedQuestions(parsed, c.id)
-        setQuestionsForCategory(c.id, normalized)
+      const results = await Promise.allSettled(
+        targets.map(async (c) => {
+          const text = truncateMiddle(state.categories[c.id].extractedText, 10000)
+          const system = buildQuestionGenerationSystem(c.id, 60)
+          const userMsg = buildQuestionGenerationUser(c.id, text)
+          const raw = await callClaude(key, system, userMsg)
+          const parsed = parseJsonArray<{
+            question: string
+            choices: { A: string; B: string; C: string; D: string }
+            correct: string
+            explanation: string
+          }>(raw)
+          const normalized = normalizeImportedQuestions(parsed, c.id)
+          setQuestionsForCategory(c.id, normalized)
+        }),
+      )
+      const failures = results
+        .map((r, i) => (r.status === 'rejected' ? `${categoryName(targets[i].id)}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}` : null))
+        .filter(Boolean)
+      if (failures.length) {
+        setGenError(`Failed for: ${failures.join(' | ')}`)
       }
       setGenLabel('')
     } catch (e) {
@@ -100,6 +111,96 @@ export function SetupScreen() {
       setGenLabel('')
     }
   }
+
+  const runGenerateMore = async (catId: CategoryId) => {
+    const key = state.apiKey.trim()
+    if (!key) {
+      setGenError('Please enter your Anthropic API key first.')
+      return
+    }
+    setGenError(null)
+    setGenMoreCatIds((prev) => new Set([...prev, catId]))
+    try {
+      const text = truncateMiddle(state.categories[catId].extractedText, 10000)
+      const existing = state.categories[catId].questions.map((q) => q.question)
+      const system = buildQuestionGenerationSystem(catId, 30)
+      const userMsg = buildQuestionGenerationUser(catId, text, existing)
+      const raw = await callClaude(key, system, userMsg)
+      const parsed = parseJsonArray<{
+        question: string
+        choices: { A: string; B: string; C: string; D: string }
+        correct: string
+        explanation: string
+      }>(raw)
+      const normalized = normalizeImportedQuestions(parsed, catId)
+      const merged = [...state.categories[catId].questions, ...normalized]
+      setQuestionsForCategory(catId, merged)
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : 'Generation failed.')
+    } finally {
+      setGenMoreCatIds((prev) => { const next = new Set(prev); next.delete(catId); return next })
+    }
+  }
+
+  const exportQuestions = () => {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      questions: Object.fromEntries(
+        CATEGORIES.map((c) => [c.id, state.categories[c.id].questions]),
+      ),
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `hce-questions-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleImportFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // reset so the same file can be re-imported if needed
+    e.target.value = ''
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string) as {
+          version?: number
+          questions?: Record<string, unknown[]>
+        }
+        if (!data.questions || typeof data.questions !== 'object') {
+          throw new Error('Unrecognised file format — missing "questions" key.')
+        }
+        let total = 0
+        for (const c of CATEGORIES) {
+          const qs = data.questions[c.id]
+          if (Array.isArray(qs) && qs.length > 0) {
+            // reuse the same normalizer so IDs are stable
+            const normalised = normalizeImportedQuestions(
+              qs as Parameters<typeof normalizeImportedQuestions>[0],
+              c.id,
+            )
+            setQuestionsForCategory(c.id, normalised)
+            total += normalised.length
+          }
+        }
+        setImportMsg(`Imported ${total} questions across all categories.`)
+        setGenError(null)
+      } catch (err) {
+        setGenError(err instanceof Error ? err.message : 'Import failed.')
+        setImportMsg(null)
+      }
+    }
+    reader.readAsText(file)
+  }
+
+  const totalQuestions = CATEGORIES.reduce(
+    (sum, c) => sum + state.categories[c.id].questions.length,
+    0,
+  )
 
   return (
     <div className="space-y-8">
@@ -125,6 +226,47 @@ export function SetupScreen() {
         />
       </section>
 
+      {/* ── Transfer / Offline section ─────────────────────────────────── */}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
+        <h3 className="text-sm font-semibold text-slate-800">Transfer question bank</h3>
+        <p className="mt-1 text-xs text-slate-500">
+          Generate on one machine, export a JSON file, AirDrop/copy it to another device, then
+          import — no re-generation needed. Practice mode works fully offline once imported.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={exportQuestions}
+            disabled={totalQuestions === 0}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
+          >
+            Export questions
+            {totalQuestions > 0 && (
+              <span className="ml-2 rounded-full bg-emerald-500 px-2 py-0.5 text-xs">
+                {totalQuestions}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => importRef.current?.click()}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Import questions
+          </button>
+          <input
+            ref={importRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImportFile}
+          />
+        </div>
+        {importMsg && (
+          <p className="mt-3 text-sm font-medium text-emerald-700">{importMsg}</p>
+        )}
+      </section>
+
       {generating && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[1px]">
           <LoadingPulse label={genLabel || 'Working with Claude…'} />
@@ -139,7 +281,7 @@ export function SetupScreen() {
           disabled={generating}
           className="rounded-lg bg-[#CC0000] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#b30000] disabled:opacity-50"
         >
-          Generate All Questions
+          Generate All Questions (60 per category)
         </button>
       </section>
 
@@ -160,6 +302,8 @@ export function SetupScreen() {
         {CATEGORIES.map((c) => {
           const cat = state.categories[c.id]
           const busy = extractingId === c.id
+          const genMoreBusy = genMoreCatIds.has(c.id)
+          const qCount = cat.questions.length
           return (
             <div
               key={c.id}
@@ -196,11 +340,33 @@ export function SetupScreen() {
                   'No PDF content yet'
                 )}
               </p>
+              {qCount > 0 && (
+                <p className="mt-1 text-xs font-medium text-emerald-700">
+                  {qCount} question{qCount !== 1 ? 's' : ''} saved
+                </p>
+              )}
               {busy && (
                 <div className="mt-2 flex items-center gap-2 text-xs text-[#003366]">
                   <span className="inline-block h-4 w-4 animate-pulse-api rounded-full border-2 border-[#003366] border-t-transparent" />
                   Extracting text…
                 </div>
+              )}
+              {cat.pageCount > 0 && (
+                <button
+                  type="button"
+                  disabled={genMoreBusy || generating}
+                  onClick={() => void runGenerateMore(c.id)}
+                  className="mt-3 rounded-lg border border-[#003366] bg-white px-3 py-2 text-xs font-semibold text-[#003366] hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {genMoreBusy ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="inline-block h-3 w-3 animate-pulse-api rounded-full border-2 border-[#003366] border-t-transparent" />
+                      Generating…
+                    </span>
+                  ) : (
+                    '+ Generate 30 more'
+                  )}
+                </button>
               )}
             </div>
           )

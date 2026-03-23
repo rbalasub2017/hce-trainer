@@ -10,7 +10,7 @@ import {
 import type { CategoryId } from '../constants'
 import { CATEGORIES } from '../constants'
 import { loadState, saveState, defaultPersistedState } from '../storage'
-import type { CategoryPersisted, McQuestion, PersistedState } from '../types'
+import type { CategoryPersisted, McQuestion, MockTestRun, PersistedState } from '../types'
 
 type TrainerContextValue = {
   state: PersistedState
@@ -22,6 +22,7 @@ type TrainerContextValue = {
   addPracticeTime: (seconds: number) => void
   addQuestionsAnswered: (n: number) => void
   setMockHighScore: (pct: number) => void
+  addMockTestRun: (run: MockTestRun) => void
   toggleStar: (questionId: string) => void
   setEssayPrompt: (s: string) => void
   setEssayDraft: (s: string) => void
@@ -130,6 +131,14 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  const addMockTestRun = useCallback((run: MockTestRun) => {
+    setState((s) => ({
+      ...s,
+      mockTestHighScore: Math.max(s.mockTestHighScore, run.score),
+      mockTestHistory: [...s.mockTestHistory, run],
+    }))
+  }, [])
+
   const toggleStar = useCallback((questionId: string) => {
     setState((s) => {
       const set = new Set(s.starredQuestionIds)
@@ -171,6 +180,7 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
       addPracticeTime,
       addQuestionsAnswered,
       setMockHighScore,
+      addMockTestRun,
       toggleStar,
       setEssayPrompt,
       setEssayDraft,
@@ -186,6 +196,7 @@ export function TrainerProvider({ children }: { children: ReactNode }) {
       addPracticeTime,
       addQuestionsAnswered,
       setMockHighScore,
+      addMockTestRun,
       toggleStar,
       setEssayPrompt,
       setEssayDraft,
