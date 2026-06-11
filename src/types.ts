@@ -65,7 +65,6 @@ export interface MockTestRun {
 }
 
 export interface PersistedState {
-  apiKey: string
   categories: Record<CategoryId, CategoryPersisted>
   categoryProgress: Record<CategoryId, CategoryProgress>
   mockTestHighScore: number

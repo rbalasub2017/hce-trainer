@@ -310,7 +310,6 @@ export function MockTestScreen() {
   const startRef = useRef(startTime)
   const essayDraftRef = useRef(essayDraft)
   const uploadedImageRef = useRef(uploadedImage)
-  const apiKeyRef = useRef(state.apiKey)
   const activeProfileRef = useRef(activeProfile)
   const gradingDoneRef = useRef(false)
 
@@ -320,7 +319,6 @@ export function MockTestScreen() {
     startRef.current = startTime
     essayDraftRef.current = essayDraft
     uploadedImageRef.current = uploadedImage
-    apiKeyRef.current = state.apiKey
     activeProfileRef.current = activeProfile
   })
 
@@ -389,9 +387,8 @@ export function MockTestScreen() {
     setPhase('done')
 
     // Grade essay in background if submitted
-    const apiKey = apiKeyRef.current
     const profile = activeProfileRef.current
-    if (hasEssay && apiKey) {
+    if (hasEssay) {
       setGradingEssay(true)
       try {
         const sys = buildEssayGradingSystem()
@@ -400,8 +397,8 @@ export function MockTestScreen() {
           essayTextRaw || '[Student submitted a handwritten essay — see image]',
         )
         const raw = image
-          ? await callClaudeWithImage(apiKey, sys, image.base64, image.mediaType, userMsg)
-          : await callClaude(apiKey, sys, userMsg)
+          ? await callClaudeWithImage(sys, image.base64, image.mediaType, userMsg)
+          : await callClaude(sys, userMsg)
         const grade = parseEssayGrade(raw)
         setEssayGrade(grade)
         updateMockTestRun(runId, { essayGrade: grade })

@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useTrainer } from '../context/TrainerContext'
 import { LoadingPulse } from '../components/LoadingPulse'
 import { callClaude, callClaudeMessages, type ChatMessage } from '../utils/anthropic'
 
@@ -294,7 +293,6 @@ function BriefCard({ brief, expanded, onToggle }: { brief: CareerBrief; expanded
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function EssayCoachScreen() {
-  const { state } = useTrainer()
   const [phase, setPhase] = useState<CoachPhase>('setup')
   const [loading, setLoading] = useState(false)
   const [loadingLabel, setLoadingLabel] = useState('')
@@ -346,20 +344,9 @@ export function EssayCoachScreen() {
     }
   }, [chatMessages])
 
-  const apiKey = state.apiKey.trim()
-
-  const requireKey = (): boolean => {
-    if (!apiKey) {
-      setError('Add your Anthropic API key on the Setup screen first.')
-      return false
-    }
-    return true
-  }
-
   // ── Setup handlers ───────────────────────────────────────────────────────────
 
   const suggestCareer = async () => {
-    if (!requireKey()) return
     setLoading(true)
     setLoadingLabel('Picking a health career for you…')
     setError(null)
@@ -379,7 +366,6 @@ export function EssayCoachScreen() {
   }
 
   const buildBrief = async () => {
-    if (!requireKey()) return
     if (!careerInput.trim()) {
       setError('Enter a health career first.')
       return
@@ -388,7 +374,7 @@ export function EssayCoachScreen() {
     setLoadingLabel(`Building Career Brief for ${careerInput.trim()}…`)
     setError(null)
     try {
-      const raw = await callClaude(apiKey, BRIEF_SYSTEM, `Generate a Career Brief for: ${careerInput.trim()}`)
+      const raw = await callClaude(BRIEF_SYSTEM, `Generate a Career Brief for: ${careerInput.trim()}`)
       const fence = /```(?:json)?\s*([\s\S]*?)```/m.exec(raw)
       const jsonStr = fence ? fence[1].trim() : raw.trim()
       const parsed = JSON.parse(jsonStr) as CareerBrief
@@ -423,7 +409,6 @@ export function EssayCoachScreen() {
   }
 
   const getCoaching = async () => {
-    if (!requireKey()) return
     if (!essay.trim()) {
       setError('Write your essay first.')
       return
@@ -464,7 +449,7 @@ export function EssayCoachScreen() {
           : '',
       ].join('\n')
 
-      const response = await callClaude(apiKey, COACH_SYSTEM, userMessage)
+      const response = await callClaude(COACH_SYSTEM, userMessage)
       const scores = parseScores(response)
 
       setCoachTurns((prev) => [
@@ -482,14 +467,13 @@ export function EssayCoachScreen() {
   // ── Coaching handlers ────────────────────────────────────────────────────────
 
   const getFinalGrade = async () => {
-    if (!requireKey()) return
     if (!essay.trim()) return
     setLoading(true)
     setLoadingLabel('Running final judge evaluation…')
     setError(null)
     try {
       const user = `Career: ${brief?.career ?? 'Health Career'}\n\nStudent's Essay:\n${essay.trim()}`
-      const result = await callClaude(apiKey, FINAL_JUDGE_SYSTEM, user)
+      const result = await callClaude(FINAL_JUDGE_SYSTEM, user)
       setFinalEval(result.trim())
       setPhase('complete')
     } catch (e) {
@@ -500,7 +484,6 @@ export function EssayCoachScreen() {
   }
 
   const sendChat = async () => {
-    if (!requireKey()) return
     const msg = chatInput.trim()
     if (!msg || !brief) return
     setChatInput('')
@@ -521,7 +504,7 @@ export function EssayCoachScreen() {
         essay.trim() ? `Current essay draft:\n---\n${essay.trim()}\n---` : '',
       ].filter(Boolean).join('\n\n')
 
-      const response = await callClaudeMessages(apiKey, system, newMessages)
+      const response = await callClaudeMessages(system, newMessages)
       setChatMessages([...newMessages, { role: 'assistant', content: response }])
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Chat request failed.')

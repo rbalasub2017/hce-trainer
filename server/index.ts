@@ -1,6 +1,7 @@
 import express, { type Request, type Response, type NextFunction } from 'express'
 import Database from 'better-sqlite3'
-import { mkdirSync } from 'fs'
+import { mkdirSync, existsSync } from 'fs'
+import { timingSafeEqual } from 'crypto'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -106,6 +107,28 @@ const insertQuestion = db.prepare(`
 `)
 
 const app = express()
+
+// ── Optional shared password ───────────────────────────────────────────────
+// Set APP_PASSWORD to require HTTP basic auth (any username) on every route,
+// including the frontend. Leave unset for local development.
+const APP_PASSWORD = process.env.APP_PASSWORD ?? ''
+if (APP_PASSWORD) {
+  const expected = Buffer.from(APP_PASSWORD)
+  const matches = (supplied: string) => {
+    const got = Buffer.from(supplied)
+    return got.length === expected.length && timingSafeEqual(got, expected)
+  }
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const [scheme, encoded] = (req.headers.authorization ?? '').split(' ')
+    if (scheme === 'Basic' && encoded) {
+      const decoded = Buffer.from(encoded, 'base64').toString()
+      if (matches(decoded.slice(decoded.indexOf(':') + 1))) { next(); return }
+    }
+    res.setHeader('WWW-Authenticate', 'Basic realm="HCE Trainer"')
+    res.status(401).send('Authentication required')
+  })
+}
+
 app.use(express.json({ limit: '12mb' }))
 
 app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -115,6 +138,40 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next()
 })
 app.options('/{*path}', (_req: Request, res: Response) => { res.sendStatus(204) })
+
+// ── Anthropic proxy ────────────────────────────────────────────────────────
+// The API key lives only here, in an env var on the server. Browsers never
+// see, store, or send it.
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? ''
+
+app.get('/api/anthropic/status', (_req: Request, res: Response) => {
+  res.json({ configured: ANTHROPIC_API_KEY.length > 0 })
+})
+
+app.post('/api/anthropic/v1/messages', async (req: Request, res: Response) => {
+  if (!ANTHROPIC_API_KEY) {
+    res.status(503).json({
+      error: { message: 'No Anthropic API key is configured on the server. Set the ANTHROPIC_API_KEY environment variable and restart the server.' },
+    })
+    return
+  }
+  try {
+    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(req.body),
+    })
+    res.status(upstream.status).type('application/json').send(await upstream.text())
+  } catch (e) {
+    res.status(502).json({
+      error: { message: `Could not reach the Anthropic API: ${e instanceof Error ? e.message : String(e)}` },
+    })
+  }
+})
 
 // Save a completed run (idempotent — OR IGNORE on duplicate id)
 app.post('/api/db/runs', (req: Request, res: Response) => {
@@ -215,7 +272,19 @@ app.put('/api/db/questions/:categoryId', (req: Request, res: Response) => {
   res.json({ ok: true, count: questions.length })
 })
 
-const PORT = 3001
+// ── Serve the built frontend ───────────────────────────────────────────────
+// In production one process serves everything: static frontend + API.
+// In development (no dist/), use `npm run dev:full` instead.
+const DIST_DIR = join(__dirname, '../dist')
+if (existsSync(join(DIST_DIR, 'index.html'))) {
+  app.use(express.static(DIST_DIR))
+  app.get('/{*path}', (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api/')) { next(); return }
+    res.sendFile(join(DIST_DIR, 'index.html'))
+  })
+}
+
+const PORT = Number(process.env.PORT) || 3001
 app.listen(PORT, () => {
-  console.log(`HCE Trainer API  →  http://localhost:${PORT}`)
+  console.log(`HCE Trainer  →  http://localhost:${PORT}`)
 })

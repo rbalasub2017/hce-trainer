@@ -66,11 +66,6 @@ export function SetupScreen() {
   )
 
   const runGenerateAll = async () => {
-    const key = state.apiKey.trim()
-    if (!key) {
-      setGenError('Please enter your Anthropic API key first.')
-      return
-    }
     const targets = CATEGORIES.filter(
       (c) => state.categories[c.id].extractedText.trim().length > 0,
     )
@@ -87,7 +82,7 @@ export function SetupScreen() {
           const text = truncateMiddle(state.categories[c.id].extractedText, 10000)
           const system = buildQuestionGenerationSystem(c.id, 60)
           const userMsg = buildQuestionGenerationUser(c.id, text)
-          const raw = await callClaude(key, system, userMsg)
+          const raw = await callClaude(system, userMsg)
           const parsed = parseJsonArray<{
             question: string
             choices: { A: string; B: string; C: string; D: string }
@@ -114,11 +109,6 @@ export function SetupScreen() {
   }
 
   const runGenerateMore = async (catId: CategoryId) => {
-    const key = state.apiKey.trim()
-    if (!key) {
-      setGenError('Please enter your Anthropic API key first.')
-      return
-    }
     setGenError(null)
     setGenMoreCatIds((prev) => new Set([...prev, catId]))
     try {
@@ -126,7 +116,7 @@ export function SetupScreen() {
       const existing = state.categories[catId].questions.map((q) => q.question)
       const system = buildQuestionGenerationSystem(catId, 30)
       const userMsg = buildQuestionGenerationUser(catId, text, existing)
-      const raw = await callClaude(key, system, userMsg)
+      const raw = await callClaude(system, userMsg)
       const parsed = parseJsonArray<{
         question: string
         choices: { A: string; B: string; C: string; D: string }
@@ -149,18 +139,13 @@ export function SetupScreen() {
   }
 
   const runRegenerateCategory = async (catId: CategoryId) => {
-    const key = state.apiKey.trim()
-    if (!key) {
-      setGenError('Please enter your Anthropic API key first.')
-      return
-    }
     setGenError(null)
     setRegenCatIds((prev) => new Set([...prev, catId]))
     try {
       const text = truncateMiddle(state.categories[catId].extractedText, 10000)
       const system = buildQuestionGenerationSystem(catId, 60)
       const userMsg = buildQuestionGenerationUser(catId, text)
-      const raw = await callClaude(key, system, userMsg)
+      const raw = await callClaude(system, userMsg)
       const parsed = parseJsonArray<{
         question: string
         choices: { A: string; B: string; C: string; D: string }
@@ -241,7 +226,7 @@ export function SetupScreen() {
       <header>
         <h2 className="text-2xl font-bold text-[#003366]">Setup</h2>
         <p className="mt-1 text-slate-600">
-          Save your API key, upload textbook PDFs by category, then generate practice questions.
+          Upload textbook PDFs by category, then generate practice questions.
         </p>
       </header>
 

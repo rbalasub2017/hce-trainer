@@ -26,7 +26,6 @@ export function defaultPersistedState(): PersistedState {
     categoryProgress[c.id] = emptyProgress()
   }
   return {
-    apiKey: '',
     categories,
     categoryProgress,
     mockTestHighScore: 0,
@@ -46,6 +45,14 @@ export function loadState(profile: ProfileId): PersistedState {
       ?? (profile === 'Shyam' ? localStorage.getItem(STORAGE_KEY) : null)
     if (!raw) return defaultPersistedState()
     const parsed = JSON.parse(raw) as Partial<PersistedState>
+    // Scrub API keys persisted by older app versions — the key now lives only
+    // on the server, never in the browser.
+    localStorage.removeItem(GLOBAL_API_KEY_STORAGE_KEY)
+    const legacy = parsed as { apiKey?: string }
+    if (legacy.apiKey) {
+      delete legacy.apiKey
+      localStorage.setItem(profileKey(profile), JSON.stringify(parsed))
+    }
     const base = defaultPersistedState()
     const merged: PersistedState = {
       ...base,
@@ -73,13 +80,6 @@ export function loadState(profile: ProfileId): PersistedState {
     merged.starredQuestionIds = parsed.starredQuestionIds ?? []
     merged.essayPrompt = parsed.essayPrompt ?? ''
     merged.essayDraft = parsed.essayDraft ?? ''
-    // Always read the API key from the shared global key.
-    // Migrate legacy per-profile key on first load if the global key isn't set yet.
-    const globalKey = loadGlobalApiKey()
-    if (!globalKey && parsed.apiKey) {
-      saveGlobalApiKey(parsed.apiKey)
-    }
-    merged.apiKey = loadGlobalApiKey()
     return merged
   } catch {
     return defaultPersistedState()
@@ -88,14 +88,6 @@ export function loadState(profile: ProfileId): PersistedState {
 
 export function saveState(profile: ProfileId, state: PersistedState): void {
   localStorage.setItem(profileKey(profile), JSON.stringify(state))
-}
-
-export function loadGlobalApiKey(): string {
-  return localStorage.getItem(GLOBAL_API_KEY_STORAGE_KEY) ?? ''
-}
-
-export function saveGlobalApiKey(key: string): void {
-  localStorage.setItem(GLOBAL_API_KEY_STORAGE_KEY, key)
 }
 
 export function makeQuestionId(): string {

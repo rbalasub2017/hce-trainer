@@ -186,11 +186,6 @@ export function EssayGraderScreen() {
   }
 
   const generatePrompt = async () => {
-    const key = state.apiKey.trim()
-    if (!key) {
-      setError('Add your Anthropic API key on the Setup screen first.')
-      return
-    }
     setLoading(true)
     setLoadingLabel('Generating a new essay topic…')
     setError(null)
@@ -198,7 +193,7 @@ export function EssayGraderScreen() {
       const system =
         'You write short essay prompts for HOSA Health Career Exploration tiebreaker practice. Output only the prompt text, no preamble.'
       const user = `Write one new essay prompt in the same style as this example, but with a different angle or career focus:\n\n"${DEFAULT_ESSAY_PROMPT}"`
-      const text = await callClaude(key, system, user)
+      const text = await callClaude(system, user)
       setEssayPrompt(text.trim())
       setEvaluation(null)
     } catch (e) {
@@ -209,11 +204,6 @@ export function EssayGraderScreen() {
   }
 
   const evaluateEssay = async () => {
-    const key = state.apiKey.trim()
-    if (!key) {
-      setError('Add your Anthropic API key on the Setup screen first.')
-      return
-    }
     if (!uploadedImage && !state.essayDraft.trim()) {
       setError('Write your essay or upload a photo of your handwritten essay first.')
       return
@@ -228,13 +218,13 @@ export function EssayGraderScreen() {
       if (uploadedImage) {
         const prompt = `Essay prompt:\n${displayPrompt}\n\nPlease transcribe and evaluate the handwritten essay shown in the ${uploadedImage.isPdf ? 'PDF' : 'image'}.`
         if (uploadedImage.isPdf) {
-          text = await callClaudeWithDocument(key, JUDGE_SYSTEM_HANDWRITTEN, uploadedImage.base64, prompt)
+          text = await callClaudeWithDocument(JUDGE_SYSTEM_HANDWRITTEN, uploadedImage.base64, prompt)
         } else {
-          text = await callClaudeWithImage(key, JUDGE_SYSTEM_HANDWRITTEN, uploadedImage.base64, uploadedImage.mediaType, prompt)
+          text = await callClaudeWithImage(JUDGE_SYSTEM_HANDWRITTEN, uploadedImage.base64, uploadedImage.mediaType, prompt)
         }
       } else {
         const user = `Essay prompt:\n${displayPrompt}\n\nStudent essay:\n${state.essayDraft}`
-        text = await callClaude(key, JUDGE_SYSTEM, user)
+        text = await callClaude(JUDGE_SYSTEM, user)
       }
       setEvaluation(text.trim())
     } catch (e) {

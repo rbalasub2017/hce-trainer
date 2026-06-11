@@ -10,7 +10,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "npm run build && vite preview"
+    "start": "npm run build && tsx server/index.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

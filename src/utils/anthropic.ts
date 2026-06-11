@@ -1,12 +1,9 @@
 const MODEL = 'claude-sonnet-4-20250514'
 const ANTHROPIC_VERSION = '2023-06-01'
 
-function anthropicUrl(): string {
-  if (import.meta.env.DEV) {
-    return '/api/anthropic/v1/messages'
-  }
-  return 'https://api.anthropic.com/v1/messages'
-}
+// All calls go through the app server, which attaches the API key.
+// The key never exists in the browser.
+const ANTHROPIC_PROXY_URL = '/api/anthropic/v1/messages'
 
 type ContentBlock =
   | { type: 'text'; text: string }
@@ -14,17 +11,14 @@ type ContentBlock =
   | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } }
 
 async function callClaudeRaw(
-  apiKey: string,
   system: string,
   content: string | ContentBlock[],
 ): Promise<string> {
-  const res = await fetch(anthropicUrl(), {
+  const res = await fetch(ANTHROPIC_PROXY_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
       'anthropic-version': ANTHROPIC_VERSION,
-      'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
       model: MODEL,
@@ -56,34 +50,28 @@ async function callClaudeRaw(
   return text
 }
 
-export async function callClaude(
-  apiKey: string,
-  system: string,
-  userMessage: string,
-): Promise<string> {
-  return callClaudeRaw(apiKey, system, userMessage)
+export async function callClaude(system: string, userMessage: string): Promise<string> {
+  return callClaudeRaw(system, userMessage)
 }
 
 export async function callClaudeWithImage(
-  apiKey: string,
   system: string,
   imageBase64: string,
   mediaType: string,
   textPrompt: string,
 ): Promise<string> {
-  return callClaudeRaw(apiKey, system, [
+  return callClaudeRaw(system, [
     { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
     { type: 'text', text: textPrompt },
   ])
 }
 
 export async function callClaudeWithDocument(
-  apiKey: string,
   system: string,
   docBase64: string,
   textPrompt: string,
 ): Promise<string> {
-  return callClaudeRaw(apiKey, system, [
+  return callClaudeRaw(system, [
     { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: docBase64 } },
     { type: 'text', text: textPrompt },
   ])
@@ -92,17 +80,14 @@ export async function callClaudeWithDocument(
 export type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
 export async function callClaudeMessages(
-  apiKey: string,
   system: string,
   messages: ChatMessage[],
 ): Promise<string> {
-  const res = await fetch(anthropicUrl(), {
+  const res = await fetch(ANTHROPIC_PROXY_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
       'anthropic-version': ANTHROPIC_VERSION,
-      'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
       model: MODEL,
