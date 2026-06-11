@@ -285,6 +285,9 @@ if (existsSync(join(DIST_DIR, 'index.html'))) {
 }
 
 const PORT = Number(process.env.PORT) || 3001
-app.listen(PORT, () => {
-  console.log(`HCE Trainer  →  http://localhost:${PORT}`)
+// Set HOST=127.0.0.1 in production when a proxy (e.g. tailscale serve) is the
+// only intended entry point — the app then isn't reachable on public interfaces.
+const HOST = process.env.HOST || '0.0.0.0'
+app.listen(PORT, HOST, () => {
+  console.log(`HCE Trainer  →  http://${HOST}:${PORT}`)
 })
