@@ -83,9 +83,13 @@ export function PracticeScreen() {
     recordDrillSession,
     addPracticeTime,
     addQuestionsAnswered,
+    syncQuestionsFromServer,
   } = useTrainer()
 
   const [practiceMode, setPracticeMode] = useState<'drill' | 'adaptive' | 'essay-coach' | 'essay-grader'>('drill')
+  const [syncing, setSyncing] = useState(false)
+
+  const totalQuestions = CATEGORIES.reduce((n, c) => n + state.categories[c.id].questions.length, 0)
 
   const hasQuestions = useCallback(
     (id: CategoryId) => state.categories[id].questions.length > 0,
@@ -223,6 +227,23 @@ export function PracticeScreen() {
 
   return (
     <div className="space-y-8">
+      {totalQuestions === 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <span className="text-amber-800">No questions loaded yet. If the parent has generated questions, sync them now.</span>
+          <button
+            type="button"
+            disabled={syncing}
+            onClick={() => {
+              setSyncing(true)
+              syncQuestionsFromServer()
+              setTimeout(() => setSyncing(false), 3000)
+            }}
+            className="ml-4 shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            {syncing ? 'Syncing…' : 'Sync questions'}
+          </button>
+        </div>
+      )}
       <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between print:hidden">
         <div>
           <h2 className="text-2xl font-bold text-[#003366]">Practice</h2>

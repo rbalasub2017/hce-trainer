@@ -10,14 +10,13 @@ import {
 import type { CategoryId, ProfileId } from '../constants'
 import { CATEGORIES } from '../constants'
 export const PARENT_PROFILE_ID: ProfileId = 'Parent'
-import { loadState, saveState, saveGlobalApiKey, defaultPersistedState } from '../storage'
+import { loadState, saveState, defaultPersistedState } from '../storage'
 import type { CategoryPersisted, McQuestion, MockTestRun, PersistedState } from '../types'
 import { fetchQuestionsFromServer, saveQuestionsToServer } from '../utils/db'
 
 type TrainerContextValue = {
   activeProfile: ProfileId
   state: PersistedState
-  setApiKey: (key: string) => void
   setCategoryData: (id: CategoryId, patch: Partial<CategoryPersisted>) => void
   setQuestionsForCategory: (id: CategoryId, questions: McQuestion[]) => void
   recordDrillSession: (id: CategoryId, correct: number, attempted: number) => void
@@ -31,6 +30,7 @@ type TrainerContextValue = {
   setEssayPrompt: (s: string) => void
   setEssayDraft: (s: string) => void
   resetAllProgress: () => void
+  syncQuestionsFromServer: () => void
 }
 
 const TrainerContext = createContext<TrainerContextValue | null>(null)
@@ -62,21 +62,26 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
 
   // On mount: sync with the shared server question bank.
   //   Parent  → push local questions up (Parent is the source of truth for content)
-  //   Student → always pull from server (stay in sync with whatever Parent has published)
+  //   Student → pull from server; fall back to Parent's localStorage if server is unreachable
+  //             (covers single-device use where the server process isn't running)
   // Runs once per profile switch; localStorage stays as offline fallback.
   useEffect(() => {
     const isParent = profile === PARENT_PROFILE_ID
     const snapshot = loadState(profile)
+    // For student profiles, pre-load Parent's local state as an offline fallback.
+    const parentSnapshot = isParent ? null : loadState(PARENT_PROFILE_ID)
     for (const cat of CATEGORIES) {
-      const local = snapshot.categories[cat.id]
       if (isParent) {
         // Parent: push any questions they have so students can access them
+        const local = snapshot.categories[cat.id]
         if (local.status !== 'empty' && local.questions.length > 0) {
           void saveQuestionsToServer(cat.id, local.questions)
         }
       } else {
-        // Student: always pull from server — picks up new questions Parent generates
-        fetchQuestionsFromServer(cat.id).then((questions) => {
+        // Student: pull from server first; fall back to Parent's local questions
+        fetchQuestionsFromServer(cat.id).then((serverQuestions) => {
+          const parentQs = parentSnapshot!.categories[cat.id].questions
+          const questions = serverQuestions ?? (parentQs.length > 0 ? parentQs : null)
           if (!questions) return
           setState((s) => ({
             ...s,
@@ -89,11 +94,6 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
       }
     }
   }, [profile]) // re-run when profile switches
-
-  const setApiKey = useCallback((apiKey: string) => {
-    saveGlobalApiKey(apiKey)
-    setState((s) => ({ ...s, apiKey }))
-  }, [])
 
   const setCategoryData = useCallback((id: CategoryId, patch: Partial<CategoryPersisted>) => {
     setState((s) => ({
@@ -117,7 +117,7 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
         },
       },
     }))
-    if (questions.length > 0) void saveQuestionsToServer(id, questions)
+    void saveQuestionsToServer(id, questions)
   }, [])
 
   const recordDrillSession = useCallback((id: CategoryId, correct: number, attempted: number) => {
@@ -201,12 +201,31 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
     setState((s) => ({ ...s, essayDraft }))
   }, [])
 
+  // Manually re-pull questions from server + Parent localStorage fallback.
+  // Called by students when the initial mount sync failed (e.g., server not ready yet).
+  const syncQuestionsFromServer = useCallback(() => {
+    const parentSnapshot = loadState(PARENT_PROFILE_ID)
+    for (const cat of CATEGORIES) {
+      fetchQuestionsFromServer(cat.id).then((serverQuestions) => {
+        const parentQs = parentSnapshot.categories[cat.id].questions
+        const questions = serverQuestions ?? (parentQs.length > 0 ? parentQs : null)
+        if (!questions) return
+        setState((s) => ({
+          ...s,
+          categories: {
+            ...s.categories,
+            [cat.id]: { ...s.categories[cat.id], questions, status: 'generated' },
+          },
+        }))
+      })
+    }
+  }, [])
+
   const resetAllProgress = useCallback(() => {
     setState((prev) => {
       const fresh = defaultPersistedState()
       return {
         ...fresh,
-        apiKey: prev.apiKey,
         categories: prev.categories,
         essayPrompt: prev.essayPrompt,
         essayDraft: prev.essayDraft,
@@ -218,7 +237,6 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
     () => ({
       activeProfile: profile,
       state,
-      setApiKey,
       setCategoryData,
       setQuestionsForCategory,
       recordDrillSession,
@@ -232,10 +250,10 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
       setEssayPrompt,
       setEssayDraft,
       resetAllProgress,
+      syncQuestionsFromServer,
     }),
     [
       state,
-      setApiKey,
       setCategoryData,
       setQuestionsForCategory,
       recordDrillSession,
@@ -249,6 +267,7 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
       setEssayPrompt,
       setEssayDraft,
       resetAllProgress,
+      syncQuestionsFromServer,
       profile,
     ],
   )
