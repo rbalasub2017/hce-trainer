@@ -19,7 +19,8 @@ db.exec(`
     question TEXT NOT NULL,
     choices TEXT NOT NULL,
     correct TEXT NOT NULL,
-    explanation TEXT NOT NULL
+    explanation TEXT NOT NULL,
+    source TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_questions_category ON questions(category_id);
 
@@ -54,6 +55,13 @@ db.exec(`
 // Migrate existing DBs that lack the profile column
 try {
   db.exec(`ALTER TABLE mock_runs ADD COLUMN profile TEXT NOT NULL DEFAULT 'Shyam'`)
+} catch {
+  // Column already exists — ignore
+}
+
+// Migrate existing DBs that lack the questions.source column (book/page citation)
+try {
+  db.exec(`ALTER TABLE questions ADD COLUMN source TEXT`)
 } catch {
   // Column already exists — ignore
 }
@@ -244,7 +252,7 @@ app.delete('/api/db/runs', (req: Request, res: Response) => {
 // Get all questions for a category
 app.get('/api/db/questions/:categoryId', (req: Request, res: Response) => {
   const rows = db.prepare(
-    'SELECT id, category_id AS categoryId, question, choices, correct, explanation FROM questions WHERE category_id = ? ORDER BY rowid',
+    'SELECT id, category_id AS categoryId, question, choices, correct, explanation, source FROM questions WHERE category_id = ? ORDER BY rowid',
   ).all(req.params.categoryId) as Array<Record<string, unknown>>
   const parsed = rows.map((q) => ({ ...q, choices: JSON.parse(q.choices as string) }))
   res.json(parsed)
@@ -253,20 +261,20 @@ app.get('/api/db/questions/:categoryId', (req: Request, res: Response) => {
 // Atomically replace the question bank for a category
 app.put('/api/db/questions/:categoryId', (req: Request, res: Response) => {
   const questions = req.body as Array<{
-    id: string; question: string; choices: Record<string, string>; correct: string; explanation: string
+    id: string; question: string; choices: Record<string, string>; correct: string; explanation: string; source?: string
   }>
   if (!Array.isArray(questions)) { res.status(400).json({ error: 'Expected array' }); return }
   const categoryId = req.params.categoryId
   const upsert = db.prepare(`
-    INSERT INTO questions (id, category_id, question, choices, correct, explanation)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO questions (id, category_id, question, choices, correct, explanation, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET question=excluded.question, choices=excluded.choices,
-      correct=excluded.correct, explanation=excluded.explanation
+      correct=excluded.correct, explanation=excluded.explanation, source=excluded.source
   `)
   db.transaction(() => {
     db.prepare('DELETE FROM questions WHERE category_id = ?').run(categoryId)
     for (const q of questions) {
-      upsert.run(q.id, categoryId, q.question, JSON.stringify(q.choices), q.correct, q.explanation)
+      upsert.run(q.id, categoryId, q.question, JSON.stringify(q.choices), q.correct, q.explanation, q.source ?? null)
     }
   })()
   res.json({ ok: true, count: questions.length })
