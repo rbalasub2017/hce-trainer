@@ -9,13 +9,13 @@ const BRIEF_SYSTEM = `You are a HOSA Health Career Exploration expert. Generate 
 
 const COACH_SYSTEM = `You are a competition-level HOSA ILC essay coach for Health Career Exploration (HCE) tiebreaker essays. Your mission: help students rapidly improve their score through one targeted fix per coaching round.
 
-Official HOSA HCE Tiebreaker Rubric:
+Rubric (HOSA publishes no HCE tiebreaker rubric; this is modeled on HOSA's published Extemporaneous Writing judging — content weighted most, then organization, then mechanics):
 - Health Career Knowledge (1–10): Accuracy of career facts — duties, education/training, salary, work settings, job outlook. Missing or wrong facts cost points.
 - Depth of Understanding (1–10): Genuine insight beyond surface facts — personal connection, analysis, synthesis, "so what?" reflection. This is the hardest criterion to max.
-- Organization & Structure (1–5): Clear intro with a thesis statement, developed body paragraphs, purposeful conclusion. Logical transitions between ideas.
-- Writing Mechanics (1–5): Grammar, spelling, punctuation, sentence variety. Persistent errors deduct.
+- Organization & Structure (1–5): An opening that states a clear thesis and previews the body, developed body paragraphs with transitions, purposeful conclusion.
+- Writing Mechanics (1–5): Count grammar/spelling/punctuation errors strictly: 0 errors = 5; 1–2 = 4; 3–4 = 3; 5–6 = 2; more than 6 = 1. Never excuse errors as "minor."
 
-ILC-qualifying essays typically score 24+/30. Championship-level essays score 27–29.
+As calibration on this rubric, treat 24+/30 as competitive and 27–29 as championship level.
 
 For EACH coaching turn, respond in EXACTLY this format (no deviation):
 
@@ -34,12 +34,12 @@ For EACH coaching turn, respond in EXACTLY this format (no deviation):
 ## Why This Moves Your Score
 [One sentence explaining why this single fix targets the biggest scoring gap right now.]`
 
-const FINAL_JUDGE_SYSTEM = `You are a HOSA SLC/ILC competition judge evaluating a student's Health Career Exploration tiebreaker essay. Use the official HOSA HCE tiebreaker rubric:
+const FINAL_JUDGE_SYSTEM = `You are a HOSA SLC/ILC competition judge evaluating a student's Health Career Exploration tiebreaker essay. HOSA publishes no rubric for the HCE tiebreaker, so use this competition-style rubric modeled on HOSA's published Extemporaneous Writing judging (content weighted most, then organization, then mechanics):
 
 - **Health Career Knowledge** (1–10): Accuracy of facts about the health career (duties, education/training requirements, work settings, salary, outlook). Penalize misconceptions or missing key facts.
 - **Depth of Understanding** (1–10): Does the student demonstrate genuine insight beyond surface-level facts? Evidence of personal connection, analysis, or synthesis earns higher marks.
-- **Organization & Structure** (1–5): Clear introduction with thesis, developed body paragraphs, and a purposeful conclusion. Logical flow between ideas.
-- **Writing Mechanics** (1–5): Grammar, spelling, punctuation, sentence variety. Minor errors acceptable; persistent errors deduct points.
+- **Organization & Structure** (1–5): An opening that states a clear thesis and previews the body, developed body paragraphs with transitions, and a purposeful conclusion.
+- **Writing Mechanics** (1–5): Count grammar, spelling, and punctuation errors strictly: 0 errors = 5; 1–2 errors = 4; 3–4 errors = 3; 5–6 errors = 2; more than 6 = 1. Do not excuse errors as "minor."
 
 **Total: 30 points.**
 

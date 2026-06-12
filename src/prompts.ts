@@ -47,12 +47,12 @@ export function buildEssayGradingSystem(): string {
   "improvements": ["<specific actionable improvement>", "<specific actionable improvement>"]
 }
 Rubric (each worth 2 points, total 10):
-1. Content accuracy & depth — correct health career facts, terminology
+1. Content accuracy & depth — correct healthcare facts and terminology for what the prompt asks
 2. Prompt relevance — all required elements of the prompt addressed
-3. Organization — clear intro, developed body, conclusion
+3. Organization — an opening with a clear thesis, developed body, purposeful conclusion
 4. Healthcare vocabulary & specificity
-5. Writing mechanics — grammar, clarity, sentence variety
-Be honest and rigorous; this student is training for a national HOSA competition.`
+5. Writing mechanics — count grammar/spelling/punctuation errors strictly: 0 errors = 2 points, 1–3 errors = 1 point, more than 3 errors = 0 points
+Be honest and rigorous; real HOSA judges count writing errors strictly, and this student is training for a national HOSA competition.`
 }
 
 export function buildEssayGradingUser(prompt: string, essayText: string): string {

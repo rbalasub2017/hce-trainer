@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import { CATEGORIES, DEFAULT_ESSAY_PROMPT, type CategoryId } from '../constants'
+import { CATEGORIES, MOCK_ESSAY_PROMPTS, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
 import type { ChoiceKey, EssayGrade, McQuestion, QuestionResult } from '../types'
 import { pickRandom, shuffleInPlace } from '../utils/shuffle'
@@ -293,7 +293,9 @@ export function MockTestScreen() {
 
   // ── Essay state ───────────────────────────────────────────────────────────
   const [essayDraft, setEssayDraft] = useState('')
-  const [essayPrompt] = useState(state.essayPrompt.trim() || DEFAULT_ESSAY_PROMPT)
+  const [essayPrompt] = useState(
+    state.essayPrompt.trim() || MOCK_ESSAY_PROMPTS[Math.floor(Math.random() * MOCK_ESSAY_PROMPTS.length)],
+  )
   const [uploadedImage, setUploadedImage] = useState<{ base64: string; mediaType: string; preview: string; isPdf: boolean; fileName: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 

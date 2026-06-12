@@ -1,27 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { DEFAULT_ESSAY_PROMPT } from '../constants'
+import { DEFAULT_ESSAY_PROMPT, ESSAY_ARCHETYPES } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
 import { LoadingPulse } from '../components/LoadingPulse'
 import { callClaude, callClaudeWithDocument, callClaudeWithImage } from '../utils/anthropic'
 
-const JUDGE_SYSTEM = `You are a HOSA SLC/ILC competition judge evaluating a student's Health Career Exploration tiebreaker essay. Use the official HOSA HCE tiebreaker rubric:
+const JUDGE_SYSTEM = `You are a HOSA SLC/ILC competition judge evaluating a student's Health Career Exploration tiebreaker essay. HOSA publishes no rubric for the HCE tiebreaker, so use this competition-style rubric modeled on HOSA's published Extemporaneous Writing judging (content weighted most, then organization, then mechanics):
 
-- **Health Career Knowledge** (1–10): Accuracy of facts about the health career (duties, education/training requirements, work settings, salary, outlook). Penalize misconceptions or missing key facts.
+- **Healthcare Knowledge** (1–10): Accuracy and specificity of the healthcare facts and terms the prompt calls for (career prompt: duties, education/training, work settings, salary, outlook; scenario prompt: the correct legal/ethical concepts; motivation prompt: accurate qualities and examples). Penalize misconceptions, vagueness, or missing required elements.
 - **Depth of Understanding** (1–10): Does the student demonstrate genuine insight beyond surface-level facts? Evidence of personal connection, analysis, or synthesis earns higher marks.
-- **Organization & Structure** (1–5): Clear introduction with thesis, developed body paragraphs, and a purposeful conclusion. Logical flow between ideas.
-- **Writing Mechanics** (1–5): Grammar, spelling, punctuation, sentence variety. Minor errors acceptable; persistent errors deduct points.
+- **Organization & Structure** (1–5): An opening that states a clear thesis and previews the body, developed body paragraphs with transitions, and a purposeful conclusion.
+- **Writing Mechanics** (1–5): Count grammar, spelling, and punctuation errors strictly, the way HOSA's published writing rubric does: 0 errors = 5; 1–2 errors = 4; 3–4 errors = 3; 5–6 errors = 2; more than 6 = 1. Do not excuse errors as "minor."
 
 **Total: 30 points.**
 
 Format your response with markdown headers (##) for each section. Give a score for each criterion, then a 2–3 sentence justification. End with "## Strengths" (3 bullets) and "## Areas for Improvement" (3 bullets). Be specific, constructive, and encouraging — this is a student practicing for competition.`
 
-const JUDGE_SYSTEM_HANDWRITTEN = `You are a HOSA SLC/ILC competition judge evaluating a student's handwritten Health Career Exploration tiebreaker essay. First, under a "## Transcription" header, transcribe the handwritten text exactly as written (preserving any errors). Then apply the official HOSA HCE tiebreaker rubric:
+const JUDGE_SYSTEM_HANDWRITTEN = `You are a HOSA SLC/ILC competition judge evaluating a student's handwritten Health Career Exploration tiebreaker essay. First, under a "## Transcription" header, transcribe the handwritten text exactly as written (preserving any errors). Then apply this competition-style rubric (HOSA publishes no HCE tiebreaker rubric; this is modeled on HOSA's published Extemporaneous Writing judging — content weighted most, then organization, then mechanics):
 
-- **Health Career Knowledge** (1–10): Accuracy of facts about the health career (duties, education/training requirements, work settings, salary, outlook). Penalize misconceptions or missing key facts.
+- **Healthcare Knowledge** (1–10): Accuracy and specificity of the healthcare facts and terms the prompt calls for (career prompt: duties, education/training, work settings, salary, outlook; scenario prompt: the correct legal/ethical concepts; motivation prompt: accurate qualities and examples). Penalize misconceptions, vagueness, or missing required elements.
 - **Depth of Understanding** (1–10): Does the student demonstrate genuine insight beyond surface-level facts? Evidence of personal connection, analysis, or synthesis earns higher marks.
-- **Organization & Structure** (1–5): Clear introduction with thesis, developed body paragraphs, and a purposeful conclusion. Logical flow between ideas.
-- **Writing Mechanics** (1–5): Grammar, spelling, punctuation, sentence variety. Minor errors acceptable; persistent errors deduct points.
-- **Legibility** (1–5): Can the handwriting be read clearly and consistently? This is an official HOSA judging criterion for handwritten submissions.
+- **Organization & Structure** (1–5): An opening that states a clear thesis and previews the body, developed body paragraphs with transitions, and a purposeful conclusion.
+- **Writing Mechanics** (1–5): Count grammar, spelling, and punctuation errors strictly, the way HOSA's published writing rubric does: 0 errors = 5; 1–2 errors = 4; 3–4 errors = 3; 5–6 errors = 2; more than 6 = 1. Do not excuse errors as "minor."
+- **Legibility** (1–5): Can the handwriting be read clearly and consistently? A tiebreaker essay a judge cannot read cannot win the tie.
 
 **Total: 35 points.**
 
@@ -192,7 +192,8 @@ export function EssayGraderScreen() {
     try {
       const system =
         'You write short essay prompts for HOSA Health Career Exploration tiebreaker practice. Output only the prompt text, no preamble.'
-      const user = `Write one new essay prompt in the same style as this example, but with a different angle or career focus:\n\n"${DEFAULT_ESSAY_PROMPT}"`
+      const archetype = ESSAY_ARCHETYPES[Math.floor(Math.random() * ESSAY_ARCHETYPES.length)]
+      const user = `Write ONE new tiebreaker essay prompt for a middle school HOSA competitor, in the same style as this example:\n\n"${DEFAULT_ESSAY_PROMPT}"\n\nThis prompt's type: ${archetype.label}. ${archetype.instruction}\nKeep it to 2-3 sentences and state clearly what the essay must include.`
       const text = await callClaude(system, user)
       setEssayPrompt(text.trim())
       setEvaluation(null)
