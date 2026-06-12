@@ -76,4 +76,11 @@ export interface PersistedState {
   essayDraft: string
 }
 
+/** The slice of PersistedState that is synced to the server per profile, so
+ *  progress earned in one browser is visible from any other device. */
+export type ProgressSlice = Pick<
+  PersistedState,
+  'categoryProgress' | 'mockTestHighScore' | 'mockTestHistory' | 'totalPracticeSeconds' | 'totalQuestionsAnswered'
+>
+
 export type ScreenId = 'setup' | 'practice' | 'mock' | 'essay' | 'dashboard' | 'reference' | 'settings'

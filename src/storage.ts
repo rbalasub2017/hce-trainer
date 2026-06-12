@@ -1,5 +1,5 @@
 import { CATEGORIES, GLOBAL_API_KEY_STORAGE_KEY, STORAGE_KEY, type CategoryId, type ProfileId } from './constants'
-import type { CategoryPersisted, CategoryProgress, McQuestion, PersistedState } from './types'
+import type { CategoryPersisted, CategoryProgress, McQuestion, PersistedState, ProgressSlice } from './types'
 
 function profileKey(profile: ProfileId): string {
   return `${STORAGE_KEY}:${profile}`
@@ -88,6 +88,46 @@ export function loadState(profile: ProfileId): PersistedState {
 
 export function saveState(profile: ProfileId, state: PersistedState): void {
   localStorage.setItem(profileKey(profile), JSON.stringify(state))
+}
+
+export function progressSlice(state: PersistedState): ProgressSlice {
+  return {
+    categoryProgress: state.categoryProgress,
+    mockTestHighScore: state.mockTestHighScore,
+    mockTestHistory: state.mockTestHistory,
+    totalPracticeSeconds: state.totalPracticeSeconds,
+    totalQuestionsAnswered: state.totalQuestionsAnswered,
+  }
+}
+
+export function hasProgress(p: ProgressSlice): boolean {
+  return (
+    p.totalQuestionsAnswered > 0 ||
+    p.totalPracticeSeconds > 0 ||
+    p.mockTestHistory.length > 0 ||
+    Object.values(p.categoryProgress).some((c) => c.attempted > 0)
+  )
+}
+
+/** Fill in anything missing from a server-synced slice (e.g. categories added
+ *  after the slice was written) so consumers can index it safely. */
+export function normalizeProgressSlice(raw: Partial<ProgressSlice>): ProgressSlice {
+  const categoryProgress = {} as Record<CategoryId, CategoryProgress>
+  for (const c of CATEGORIES) {
+    const p = raw.categoryProgress?.[c.id]
+    categoryProgress[c.id] = {
+      ...emptyProgress(),
+      ...p,
+      sessions: p?.sessions ?? [],
+    }
+  }
+  return {
+    categoryProgress,
+    mockTestHighScore: raw.mockTestHighScore ?? 0,
+    mockTestHistory: raw.mockTestHistory ?? [],
+    totalPracticeSeconds: raw.totalPracticeSeconds ?? 0,
+    totalQuestionsAnswered: raw.totalQuestionsAnswered ?? 0,
+  }
 }
 
 export function makeQuestionId(): string {

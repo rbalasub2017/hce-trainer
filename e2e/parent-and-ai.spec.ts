@@ -66,6 +66,41 @@ test('essay grader evaluates through the server proxy (mocked)', async ({ page }
   await expect(page.getByText(EVALUATION)).toBeVisible({ timeout: 10_000 })
 })
 
+test.describe('cross-device progress sync', () => {
+  test.afterAll(async ({ request }) => {
+    await request.delete('/api/db/progress?profile=test')
+  })
+
+  test('parent dashboard shows student progress earned in another browser', async ({ page, request }) => {
+    // Student drills 5 questions under the 'test' profile
+    await page.goto('/')
+    await page.waitForTimeout(1500)
+    await page.getByRole('button', { name: /Shyam/ }).click()
+    await page.getByRole('button', { name: 'Test', exact: true }).click()
+    await page.waitForTimeout(1500)
+    await page.locator('select').first().selectOption({ label: 'Diagnostics' })
+    await page.getByRole('button', { name: /Load \d+ questions/ }).click()
+    const radios = page.locator('section input[type=radio]')
+    for (let q = 0; q < 5; q++) await radios.nth(q * 4).check()
+    await page.getByRole('button', { name: 'Check Answers' }).click()
+    await expect(page.getByText('Explanation:')).toHaveCount(5)
+
+    // the debounced push lands on the server
+    await expect
+      .poll(async () => (await (await request.get('/api/db/progress?profile=test')).json()), { timeout: 10_000 })
+      .not.toBeNull()
+
+    // "Different device": wipe all local storage, reload, view as Parent
+    await page.evaluate(() => localStorage.clear())
+    await page.reload()
+    await page.getByRole('button', { name: /Shyam/ }).click()
+    await page.getByRole('button', { name: 'Parent', exact: true }).click()
+    await page.getByRole('button', { name: 'Progress Dashboard', exact: true }).click()
+    await page.getByRole('button', { name: 'Test', exact: true }).click()
+    await expect(page.locator('li', { hasText: 'Total questions answered:' })).toContainText('5')
+  })
+})
+
 test('essay grader surfaces a clear error when no server key is configured', async ({ page }) => {
   await page.goto('/')
   await page.waitForTimeout(1500)

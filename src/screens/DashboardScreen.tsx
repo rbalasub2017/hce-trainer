@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
-import { CATEGORIES, PROFILES } from '../constants'
+import { useEffect, useMemo, useState } from 'react'
+import { CATEGORIES, PROFILES, type ProfileId } from '../constants'
 import { useTrainer, PARENT_PROFILE_ID } from '../context/TrainerContext'
 import { categoryName } from '../prompts'
 import { loadState } from '../storage'
-import { deleteAllRunsFromBackend } from '../utils/db'
+import { deleteAllRunsFromBackend, deleteProgressFromBackend, fetchProgressFromBackend } from '../utils/db'
 import type { CategoryProgress, EssayGrade, MockTestRun, PersistedState, QuestionResult } from '../types'
 
 function pct(p: CategoryProgress): number {
@@ -577,9 +577,27 @@ export function DashboardScreen() {
   const isParent = activeProfile === PARENT_PROFILE_ID
 
 // Parent view: pick which student to view (defaults to first student)
-  const [viewingProfileId, setViewingProfileId] = useState<string>(STUDENT_PROFILES[0]!.id)
-  const viewState = isParent ? loadState(viewingProfileId as Parameters<typeof loadState>[0]) : state
+  const [viewingProfileId, setViewingProfileId] = useState<ProfileId>(STUDENT_PROFILES[0]!.id)
   const viewingLabel = isParent ? STUDENT_PROFILES.find((p) => p.id === viewingProfileId)?.label : null
+
+  // Parent view: the student usually practices in a different browser, so
+  // their progress lives on the server — fetch it there and overlay it on
+  // this browser's localStorage copy (the offline fallback). The result is
+  // tagged with its profile so switching students never shows stale data.
+  const [parentView, setParentView] = useState<{ profile: ProfileId; state: PersistedState } | null>(null)
+  useEffect(() => {
+    if (!isParent) return
+    let cancelled = false
+    void fetchProgressFromBackend(viewingProfileId).then((remote) => {
+      if (cancelled || !remote) return
+      setParentView({ profile: viewingProfileId, state: { ...loadState(viewingProfileId), ...remote } })
+    })
+    return () => { cancelled = true }
+  }, [isParent, viewingProfileId])
+
+  const viewState = isParent
+    ? (parentView?.profile === viewingProfileId ? parentView.state : loadState(viewingProfileId))
+    : state
 
   return (
     <div className="space-y-8">
@@ -621,7 +639,11 @@ export function DashboardScreen() {
       <DashboardView
         viewState={viewState}
         isReadOnly={isParent}
-        onReset={!isParent ? () => { resetAllProgress(); void deleteAllRunsFromBackend(activeProfile) } : undefined}
+        onReset={!isParent ? () => {
+          resetAllProgress()
+          void deleteAllRunsFromBackend(activeProfile)
+          void deleteProgressFromBackend(activeProfile)
+        } : undefined}
       />
     </div>
   )

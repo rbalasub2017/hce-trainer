@@ -10,9 +10,9 @@ import {
 import type { CategoryId, ProfileId } from '../constants'
 import { CATEGORIES } from '../constants'
 export const PARENT_PROFILE_ID: ProfileId = 'Parent'
-import { loadState, saveState, defaultPersistedState } from '../storage'
+import { loadState, saveState, defaultPersistedState, progressSlice, hasProgress } from '../storage'
 import type { CategoryPersisted, McQuestion, MockTestRun, PersistedState } from '../types'
-import { fetchQuestionsFromServer, saveQuestionsToServer } from '../utils/db'
+import { fetchProgressFromBackend, fetchQuestionsFromServer, saveProgressToBackend, saveQuestionsToServer } from '../utils/db'
 
 type TrainerContextValue = {
   activeProfile: ProfileId
@@ -94,6 +94,29 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
       }
     }
   }, [profile]) // re-run when profile switches
+
+  // Progress sync (students only — Parent doesn't practice):
+  //   pull on mount → a fresh browser adopts progress earned on another device
+  //   push on change (debounced) → other devices' dashboards stay current
+  useEffect(() => {
+    if (profile === PARENT_PROFILE_ID) return
+    void fetchProgressFromBackend(profile).then((remote) => {
+      if (!remote || !hasProgress(remote)) return
+      // Local activity wins — only adopt server progress onto a blank slate,
+      // so a stale server copy can never clobber what was earned here.
+      setState((s) => (hasProgress(progressSlice(s)) ? s : { ...s, ...remote }))
+    })
+  }, [profile])
+
+  useEffect(() => {
+    if (profile === PARENT_PROFILE_ID) return
+    const slice = progressSlice(state)
+    // Never push an empty slate — it would erase server-side progress when a
+    // new device loads before its pull completes. Reset deletes explicitly.
+    if (!hasProgress(slice)) return
+    const t = setTimeout(() => { void saveProgressToBackend(profile, slice) }, 800)
+    return () => clearTimeout(t)
+  }, [profile, state])
 
   const setCategoryData = useCallback((id: CategoryId, patch: Partial<CategoryPersisted>) => {
     setState((s) => ({

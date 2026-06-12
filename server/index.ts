@@ -50,6 +50,12 @@ db.exec(`
     user_answer TEXT,
     explanation TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS progress (
+    profile TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
 `)
 
 // Migrate existing DBs that lack the profile column
@@ -244,6 +250,38 @@ app.get('/api/db/runs/:id', (req: Request, res: Response) => {
 app.delete('/api/db/runs', (req: Request, res: Response) => {
   const profile = (req.query.profile as string) || 'Shyam'
   db.prepare('DELETE FROM mock_runs WHERE profile = ?').run(profile)
+  res.json({ ok: true })
+})
+
+// ---------- Synced progress (per profile) ----------
+// Drill stats, practice totals, and mock history are earned in the student's
+// browser; syncing them here lets a dashboard on any other device see them.
+
+const upsertProgress = db.prepare(`
+  INSERT INTO progress (profile, data, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(profile) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+`)
+
+app.get('/api/db/progress', (req: Request, res: Response) => {
+  const profile = (req.query.profile as string) || 'Shyam'
+  const row = db.prepare('SELECT data FROM progress WHERE profile = ?').get(profile) as { data: string } | undefined
+  res.json(row ? JSON.parse(row.data) : null)
+})
+
+app.put('/api/db/progress', (req: Request, res: Response) => {
+  const { profile, ...data } = req.body as { profile?: string } & Record<string, unknown>
+  if (!profile) {
+    res.status(400).json({ error: 'Missing profile' })
+    return
+  }
+  upsertProgress.run(profile, JSON.stringify(data), new Date().toISOString())
+  res.json({ ok: true })
+})
+
+// Delete synced progress for a profile (used by "Reset All Progress")
+app.delete('/api/db/progress', (req: Request, res: Response) => {
+  const profile = (req.query.profile as string) || 'Shyam'
+  db.prepare('DELETE FROM progress WHERE profile = ?').run(profile)
   res.json({ ok: true })
 })
 
