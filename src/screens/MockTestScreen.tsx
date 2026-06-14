@@ -358,7 +358,10 @@ export function MockTestScreen() {
       total,
       mode: (paper.length > MOCK_TOTAL ? 'tough' : 'normal') as 'normal' | 'tough',
       questions: questionResults,
-      essayPrompt: hasEssay ? essayPrompt : undefined,
+      // Always record the prompt that was shown (not just when an essay was
+      // submitted) so prompt rotation can exclude it on the next attempt even
+      // if the student skipped writing the essay.
+      essayPrompt,
       essayText: essayTextRaw || undefined,
     }
     addMockTestRun(run)
