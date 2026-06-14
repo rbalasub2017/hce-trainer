@@ -74,6 +74,11 @@ export interface PersistedState {
   starredQuestionIds: string[]
   essayPrompt: string
   essayDraft: string
+  /** Last reset epoch this device has acknowledged. The server stamps a fresh
+   *  timestamp on every parent-triggered reset; a device whose epoch is older
+   *  wipes its local progress and stops re-pushing, so a reset can't be undone
+   *  by a stale device replaying its old data. */
+  resetAt?: string | null
 }
 
 /** The slice of PersistedState that is synced to the server per profile, so
@@ -82,5 +87,9 @@ export type ProgressSlice = Pick<
   PersistedState,
   'categoryProgress' | 'mockTestHighScore' | 'mockTestHistory' | 'totalPracticeSeconds' | 'totalQuestionsAnswered'
 >
+
+/** What actually crosses the wire to/from the server: the progress slice plus
+ *  the reset epoch that guards against stale devices resurrecting wiped data. */
+export type SyncedProgress = ProgressSlice & { resetAt?: string | null }
 
 export type ScreenId = 'setup' | 'practice' | 'mock' | 'essay' | 'dashboard' | 'reference' | 'settings'

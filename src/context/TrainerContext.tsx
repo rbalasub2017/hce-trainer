@@ -10,7 +10,7 @@ import {
 import type { CategoryId, ProfileId } from '../constants'
 import { CATEGORIES } from '../constants'
 export const PARENT_PROFILE_ID: ProfileId = 'Parent'
-import { loadState, saveState, defaultPersistedState, progressSlice, hasProgress } from '../storage'
+import { loadState, saveState, defaultPersistedState, progressSlice, hasProgress, mergeProgress } from '../storage'
 import type { CategoryPersisted, McQuestion, MockTestRun, PersistedState } from '../types'
 import { fetchProgressFromBackend, fetchQuestionsFromServer, saveProgressToBackend, saveQuestionsToServer } from '../utils/db'
 
@@ -34,6 +34,13 @@ type TrainerContextValue = {
 }
 
 const TrainerContext = createContext<TrainerContextValue | null>(null)
+
+/** The later of two ISO reset epochs (either may be null). ISO strings sort
+ *  lexically, so a plain string compare is correct. */
+function laterEpoch(a: string | null, b: string | null): string | null {
+  const e = [a, b].filter((x): x is string => typeof x === 'string')
+  return e.length ? e.sort().at(-1)! : null
+}
 
 function pushSession(
   prev: PersistedState['categoryProgress'][CategoryId],
@@ -96,25 +103,45 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
   }, [profile]) // re-run when profile switches
 
   // Progress sync (students only — Parent doesn't practice):
-  //   pull on mount → a fresh browser adopts progress earned on another device
-  //   push on change (debounced) → other devices' dashboards stay current
+  //   pull on mount → merge the server's copy in so devices converge
+  //   push on change (debounced) → the server merges it, accumulating progress
+  // A reset epoch (resetAt) is the one signal that can shrink progress: a newer
+  // epoch from the server means the parent reset elsewhere, so we drop local
+  // progress and stop replaying it.
   useEffect(() => {
     if (profile === PARENT_PROFILE_ID) return
     void fetchProgressFromBackend(profile).then((remote) => {
-      if (!remote || !hasProgress(remote)) return
-      // Local activity wins — only adopt server progress onto a blank slate,
-      // so a stale server copy can never clobber what was earned here.
-      setState((s) => (hasProgress(progressSlice(s)) ? s : { ...s, ...remote }))
+      if (!remote) return
+      setState((s) => {
+        const localEpoch = s.resetAt ?? null
+        const remoteEpoch = remote.resetAt ?? null
+        if (remoteEpoch && (!localEpoch || remoteEpoch > localEpoch)) {
+          // Parent reset on another device wins — wipe local progress, keep
+          // questions/essay, and adopt the epoch so we don't push stale data.
+          const fresh = defaultPersistedState()
+          return {
+            ...s,
+            categoryProgress: fresh.categoryProgress,
+            mockTestHighScore: 0,
+            mockTestHistory: [],
+            totalPracticeSeconds: 0,
+            totalQuestionsAnswered: 0,
+            resetAt: remoteEpoch,
+          }
+        }
+        // Monotonic merge — never loses anything earned locally.
+        return { ...s, ...mergeProgress(progressSlice(s), remote), resetAt: laterEpoch(localEpoch, remoteEpoch) }
+      })
     })
   }, [profile])
 
   useEffect(() => {
     if (profile === PARENT_PROFILE_ID) return
     const slice = progressSlice(state)
-    // Never push an empty slate — it would erase server-side progress when a
-    // new device loads before its pull completes. Reset deletes explicitly.
+    // Never push an empty slate — it would be a no-op the server merges away,
+    // and skipping it avoids racing a not-yet-completed pull on a fresh device.
     if (!hasProgress(slice)) return
-    const t = setTimeout(() => { void saveProgressToBackend(profile, slice) }, 800)
+    const t = setTimeout(() => { void saveProgressToBackend(profile, slice, state.resetAt ?? null) }, 800)
     return () => clearTimeout(t)
   }, [profile, state])
 

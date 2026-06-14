@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { CATEGORIES, PROFILES, type ProfileId } from '../constants'
 import { useTrainer, PARENT_PROFILE_ID } from '../context/TrainerContext'
 import { categoryName } from '../prompts'
-import { loadState } from '../storage'
-import { deleteAllRunsFromBackend, deleteProgressFromBackend, fetchProgressFromBackend } from '../utils/db'
+import { defaultPersistedState, loadState } from '../storage'
+import { deleteAllRunsFromBackend, fetchProgressFromBackend, resetProgressOnBackend } from '../utils/db'
 import type { CategoryProgress, EssayGrade, MockTestRun, PersistedState, QuestionResult } from '../types'
 
 function pct(p: CategoryProgress): number {
@@ -336,10 +336,12 @@ function DashboardView({
   viewState,
   isReadOnly,
   onReset,
+  studentLabel,
 }: {
   viewState: PersistedState
   isReadOnly: boolean
   onReset?: () => void
+  studentLabel?: string | null
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [reviewRun, setReviewRun] = useState<MockTestRun | null>(null)
@@ -522,14 +524,14 @@ function DashboardView({
         </div>
       </section>
 
-      {!isReadOnly && (
+      {onReset && (
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={() => setConfirmOpen(true)}
             className="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
           >
-            Reset All Progress
+            Reset {studentLabel ? `${studentLabel}'s` : 'All'} Progress
           </button>
         </div>
       )}
@@ -541,10 +543,13 @@ function DashboardView({
       {confirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <h4 className="text-lg font-semibold text-slate-900">Reset all progress?</h4>
+            <h4 className="text-lg font-semibold text-slate-900">
+              Reset {studentLabel ? `${studentLabel}'s` : 'all'} progress?
+            </h4>
             <p className="mt-2 text-sm text-slate-600">
-              This clears scores, practice time totals, starred cards, and mock high score. Your API key, uploaded PDFs,
-              and generated questions stay saved.
+              This clears the synced scores, practice totals, mock-test history, and high score
+              {studentLabel ? ` for ${studentLabel}` : ''} on the server. Uploaded PDFs and generated questions stay
+              saved.{studentLabel ? ' Their device keeps its own copy until it next syncs.' : ''}
             </p>
             <div className="mt-6 flex justify-end gap-2">
               <button
@@ -573,7 +578,7 @@ function DashboardView({
 }
 
 export function DashboardScreen() {
-  const { activeProfile, state, resetAllProgress } = useTrainer()
+  const { activeProfile, state } = useTrainer()
   const isParent = activeProfile === PARENT_PROFILE_ID
 
 // Parent view: pick which student to view (defaults to first student)
@@ -639,10 +644,11 @@ export function DashboardScreen() {
       <DashboardView
         viewState={viewState}
         isReadOnly={isParent}
-        onReset={!isParent ? () => {
-          resetAllProgress()
-          void deleteAllRunsFromBackend(activeProfile)
-          void deleteProgressFromBackend(activeProfile)
+        studentLabel={isParent ? (viewingLabel ?? null) : null}
+        onReset={isParent ? () => {
+          void resetProgressOnBackend(viewingProfileId)
+          void deleteAllRunsFromBackend(viewingProfileId)
+          setParentView({ profile: viewingProfileId, state: defaultPersistedState() })
         } : undefined}
       />
     </div>

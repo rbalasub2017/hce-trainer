@@ -1,5 +1,5 @@
 import { CATEGORIES, GLOBAL_API_KEY_STORAGE_KEY, STORAGE_KEY, type CategoryId, type ProfileId } from './constants'
-import type { CategoryPersisted, CategoryProgress, McQuestion, PersistedState, ProgressSlice } from './types'
+import type { CategoryPersisted, CategoryProgress, McQuestion, MockTestRun, PersistedState, ProgressSlice, SyncedProgress } from './types'
 
 function profileKey(profile: ProfileId): string {
   return `${STORAGE_KEY}:${profile}`
@@ -35,6 +35,7 @@ export function defaultPersistedState(): PersistedState {
     starredQuestionIds: [],
     essayPrompt: '',
     essayDraft: '',
+    resetAt: null,
   }
 }
 
@@ -110,8 +111,9 @@ export function hasProgress(p: ProgressSlice): boolean {
 }
 
 /** Fill in anything missing from a server-synced slice (e.g. categories added
- *  after the slice was written) so consumers can index it safely. */
-export function normalizeProgressSlice(raw: Partial<ProgressSlice>): ProgressSlice {
+ *  after the slice was written) so consumers can index it safely. Carries the
+ *  reset epoch through untouched. */
+export function normalizeProgressSlice(raw: Partial<SyncedProgress>): SyncedProgress {
   const categoryProgress = {} as Record<CategoryId, CategoryProgress>
   for (const c of CATEGORIES) {
     const p = raw.categoryProgress?.[c.id]
@@ -127,6 +129,50 @@ export function normalizeProgressSlice(raw: Partial<ProgressSlice>): ProgressSli
     mockTestHistory: raw.mockTestHistory ?? [],
     totalPracticeSeconds: raw.totalPracticeSeconds ?? 0,
     totalQuestionsAnswered: raw.totalQuestionsAnswered ?? 0,
+    resetAt: raw.resetAt ?? null,
+  }
+}
+
+/** Monotonic merge of two progress slices. Counts take the max and history is
+ *  unioned, so the result is never smaller than either input — this is what
+ *  lets the server accumulate across devices instead of last-writer-wins
+ *  clobbering. The only way progress decreases is an explicit reset (handled
+ *  separately via the reset epoch). */
+function mergeCategoryProgress(a: CategoryProgress, b: CategoryProgress): CategoryProgress {
+  // Counts move together as one lineage; take the record that did more work so
+  // attempted/correct stay consistent rather than mixing the two.
+  const lead = a.attempted >= b.attempted ? a : b
+  const seen = new Set<string>()
+  const sessions = [...(a.sessions ?? []), ...(b.sessions ?? [])]
+    .filter((s) => {
+      const k = `${s.date}|${s.attempted}|${s.correct}`
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+    .sort((x, y) => x.date.localeCompare(y.date))
+    .slice(-10)
+  return { attempted: lead.attempted, correct: lead.correct, sessions }
+}
+
+export function mergeProgress(a: ProgressSlice, b: ProgressSlice): ProgressSlice {
+  const categoryProgress = {} as Record<CategoryId, CategoryProgress>
+  for (const c of CATEGORIES) {
+    categoryProgress[c.id] = mergeCategoryProgress(a.categoryProgress[c.id], b.categoryProgress[c.id])
+  }
+  const byId = new Map<string, MockTestRun>()
+  for (const r of [...a.mockTestHistory, ...b.mockTestHistory]) {
+    const existing = byId.get(r.id)
+    // Prefer the copy that already carries a graded essay.
+    if (!existing || (!existing.essayGrade && r.essayGrade)) byId.set(r.id, r)
+  }
+  const mockTestHistory = [...byId.values()].sort((x, y) => x.date.localeCompare(y.date))
+  return {
+    categoryProgress,
+    mockTestHighScore: Math.max(a.mockTestHighScore, b.mockTestHighScore),
+    mockTestHistory,
+    totalPracticeSeconds: Math.max(a.totalPracticeSeconds, b.totalPracticeSeconds),
+    totalQuestionsAnswered: Math.max(a.totalQuestionsAnswered, b.totalQuestionsAnswered),
   }
 }
 

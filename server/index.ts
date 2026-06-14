@@ -262,6 +262,72 @@ const upsertProgress = db.prepare(`
   ON CONFLICT(profile) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
 `)
 
+// ── Progress merge (mirrors mergeProgress in src/storage.ts) ────────────────
+// Progress is monotonic: every PUT is merged into what is already stored, so a
+// device pushing a smaller slice can never shrink the server's copy. The only
+// way progress decreases is a reset, which stamps a newer `resetAt` epoch and
+// empties the slice; pushes carrying an older epoch are rejected as stale.
+interface SessionSnap { date: string; attempted: number; correct: number }
+interface CatProgress { attempted: number; correct: number; sessions: SessionSnap[] }
+interface MockRun { id: string; date: string; essayGrade?: unknown; [k: string]: unknown }
+interface ProgressData {
+  categoryProgress: Record<string, CatProgress>
+  mockTestHighScore: number
+  mockTestHistory: MockRun[]
+  totalPracticeSeconds: number
+  totalQuestionsAnswered: number
+  resetAt?: string | null
+}
+
+function emptyProgressData(resetAt: string | null): ProgressData {
+  return {
+    categoryProgress: {},
+    mockTestHighScore: 0,
+    mockTestHistory: [],
+    totalPracticeSeconds: 0,
+    totalQuestionsAnswered: 0,
+    resetAt,
+  }
+}
+
+function mergeCat(a: CatProgress | undefined, b: CatProgress | undefined): CatProgress {
+  const x = a ?? { attempted: 0, correct: 0, sessions: [] }
+  const y = b ?? { attempted: 0, correct: 0, sessions: [] }
+  const lead = x.attempted >= y.attempted ? x : y
+  const seen = new Set<string>()
+  const sessions = [...(x.sessions ?? []), ...(y.sessions ?? [])]
+    .filter((s) => {
+      const k = `${s.date}|${s.attempted}|${s.correct}`
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+    .sort((p, q) => p.date.localeCompare(q.date))
+    .slice(-10)
+  return { attempted: lead.attempted, correct: lead.correct, sessions }
+}
+
+function mergeProgressData(a: ProgressData, b: ProgressData): ProgressData {
+  const categoryProgress: Record<string, CatProgress> = {}
+  const ids = new Set([...Object.keys(a.categoryProgress ?? {}), ...Object.keys(b.categoryProgress ?? {})])
+  for (const id of ids) categoryProgress[id] = mergeCat(a.categoryProgress?.[id], b.categoryProgress?.[id])
+  const byId = new Map<string, MockRun>()
+  for (const r of [...(a.mockTestHistory ?? []), ...(b.mockTestHistory ?? [])]) {
+    const existing = byId.get(r.id)
+    if (!existing || (!existing.essayGrade && r.essayGrade)) byId.set(r.id, r)
+  }
+  const mockTestHistory = [...byId.values()].sort((p, q) => p.date.localeCompare(q.date))
+  const epochs = [a.resetAt, b.resetAt].filter((e): e is string => typeof e === 'string')
+  return {
+    categoryProgress,
+    mockTestHighScore: Math.max(a.mockTestHighScore ?? 0, b.mockTestHighScore ?? 0),
+    mockTestHistory,
+    totalPracticeSeconds: Math.max(a.totalPracticeSeconds ?? 0, b.totalPracticeSeconds ?? 0),
+    totalQuestionsAnswered: Math.max(a.totalQuestionsAnswered ?? 0, b.totalQuestionsAnswered ?? 0),
+    resetAt: epochs.length ? epochs.sort().at(-1) : null,
+  }
+}
+
 app.get('/api/db/progress', (req: Request, res: Response) => {
   const profile = (req.query.profile as string) || 'Shyam'
   const row = db.prepare('SELECT data FROM progress WHERE profile = ?').get(profile) as { data: string } | undefined
@@ -269,12 +335,37 @@ app.get('/api/db/progress', (req: Request, res: Response) => {
 })
 
 app.put('/api/db/progress', (req: Request, res: Response) => {
-  const { profile, ...data } = req.body as { profile?: string } & Record<string, unknown>
+  const { profile, reset, ...data } = req.body as { profile?: string; reset?: boolean } & Record<string, unknown>
   if (!profile) {
     res.status(400).json({ error: 'Missing profile' })
     return
   }
-  upsertProgress.run(profile, JSON.stringify(data), new Date().toISOString())
+  const row = db.prepare('SELECT data FROM progress WHERE profile = ?').get(profile) as { data: string } | undefined
+  const stored = row ? (JSON.parse(row.data) as ProgressData) : null
+
+  // Reset: stamp a fresh epoch and empty the slice. This is the one operation
+  // that is allowed to shrink stored progress.
+  if (reset) {
+    const fresh = emptyProgressData(new Date().toISOString())
+    upsertProgress.run(profile, JSON.stringify(fresh), fresh.resetAt!)
+    res.json({ ok: true, reset: fresh.resetAt })
+    return
+  }
+
+  const incoming = data as unknown as ProgressData
+  const incomingEpoch = typeof incoming.resetAt === 'string' ? incoming.resetAt : null
+  const storedEpoch = stored && typeof stored.resetAt === 'string' ? stored.resetAt : null
+
+  // Stale push: the client hasn't seen the latest reset yet. Ignore its
+  // (pre-reset) data so a reset can't be resurrected; the client catches up on
+  // its next GET.
+  if (storedEpoch && (!incomingEpoch || incomingEpoch < storedEpoch)) {
+    res.json({ ok: true, stale: true })
+    return
+  }
+
+  const merged = stored ? mergeProgressData(stored, incoming) : incoming
+  upsertProgress.run(profile, JSON.stringify(merged), new Date().toISOString())
   res.json({ ok: true })
 })
 

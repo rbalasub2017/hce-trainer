@@ -1,4 +1,4 @@
-import type { McQuestion, MockTestRun, ProgressSlice } from '../types'
+import type { McQuestion, MockTestRun, ProgressSlice, SyncedProgress } from '../types'
 import type { ProfileId } from '../constants'
 import { normalizeProgressSlice } from '../storage'
 
@@ -43,35 +43,49 @@ export async function deleteAllRunsFromBackend(profile: ProfileId): Promise<void
 }
 
 /** Fetch a profile's synced progress from the server. Returns null when the
- *  server is unreachable or has no progress for the profile. */
-export async function fetchProgressFromBackend(profile: ProfileId): Promise<ProgressSlice | null> {
+ *  server is unreachable or has no progress for the profile. Includes the
+ *  reset epoch so the caller can tell a parent reset apart from a stale copy. */
+export async function fetchProgressFromBackend(profile: ProfileId): Promise<SyncedProgress | null> {
   try {
     const res = await fetch(`/api/db/progress?profile=${encodeURIComponent(profile)}`)
     if (!res.ok) return null
-    const data = await res.json() as Partial<ProgressSlice> | null
+    const data = await res.json() as Partial<SyncedProgress> | null
     return data ? normalizeProgressSlice(data) : null
   } catch {
     return null
   }
 }
 
-/** Persist a profile's progress to the server (best-effort, fire-and-forget). */
-export async function saveProgressToBackend(profile: ProfileId, slice: ProgressSlice): Promise<void> {
+/** Persist a profile's progress to the server (best-effort, fire-and-forget).
+ *  The server merges this into whatever it already holds, so a smaller push can
+ *  never shrink the stored progress. `resetAt` is the epoch this device has
+ *  acknowledged; the server rejects the push if it predates a newer reset. */
+export async function saveProgressToBackend(
+  profile: ProfileId,
+  slice: ProgressSlice,
+  resetAt: string | null,
+): Promise<void> {
   try {
     await fetch('/api/db/progress', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...slice, profile }),
+      body: JSON.stringify({ ...slice, resetAt, profile }),
     })
   } catch {
     // Best-effort
   }
 }
 
-/** Delete a profile's synced progress (mirrors resetAllProgress). */
-export async function deleteProgressFromBackend(profile: ProfileId): Promise<void> {
+/** Durably reset a profile's synced progress: stamps a fresh reset epoch on the
+ *  server and empties the stored slice. Devices with an older epoch will wipe
+ *  their local copy on next load instead of replaying it back. */
+export async function resetProgressOnBackend(profile: ProfileId): Promise<void> {
   try {
-    await fetch(`/api/db/progress?profile=${encodeURIComponent(profile)}`, { method: 'DELETE' })
+    await fetch('/api/db/progress', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile, reset: true }),
+    })
   } catch {
     // Best-effort
   }
