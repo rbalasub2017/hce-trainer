@@ -50,8 +50,17 @@ export const ESSAY_ARCHETYPES = [
   },
 ] as const
 
+// Mock tests rotate through this pool so the same prompt doesn't recur on
+// repeat attempts. Two prompts per archetype (career / motivation / scenario)
+// keep the variety wide while staying within HCE essay expectations.
 export const MOCK_ESSAY_PROMPTS = [
+  // career
   DEFAULT_ESSAY_PROMPT,
+  'Choose a health career that interests you and describe it. Include the main duties of the job, the education or training required, where the person typically works, and one way this career helps patients or the community.',
+  // motivation
   'Explain why you want to pursue a career in healthcare. Include: the personal qualities and skills that would make you a strong health professional, and at least two specific examples of how you would use them.',
+  'Describe an experience or a person that made you interested in healthcare. Explain what you learned from it and how it has shaped the kind of health professional you hope to become.',
+  // scenario / ethics
   'A healthcare worker overhears two coworkers discussing a patient’s diagnosis in a hospital cafeteria. Explain what is wrong with this situation, which legal and ethical principles apply, and what the worker who overheard the conversation should do.',
+  'A patient tells a student volunteer that they are nervous about an upcoming procedure and asks the volunteer not to tell anyone. Explain how the volunteer should respond, which patient rights and ethical principles apply, and when information must still be shared with the care team.',
 ] as const

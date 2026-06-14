@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import { CATEGORIES, MOCK_ESSAY_PROMPTS, type CategoryId } from '../constants'
+import { CATEGORIES, type CategoryId } from '../constants'
 import { useTrainer } from '../context/TrainerContext'
 import type { ChoiceKey, EssayGrade, McQuestion, QuestionResult } from '../types'
-import { pickRandom, shuffleInPlace } from '../utils/shuffle'
+import { buildMockPaper, lastOutcomeByQuestion, pickMockEssayPrompt } from '../utils/mockSelection'
 import { categoryName, buildEssayGradingSystem, buildEssayGradingUser, parseEssayGrade } from '../prompts'
 import { callClaude, callClaudeWithImage } from '../utils/anthropic'
 import { saveRunToBackend, patchRunEssayGrade } from '../utils/db'
@@ -12,29 +12,6 @@ const MOCK_SECONDS = 60 * 60       // 60 min — HOSA SLC standard (MC + essay)
 const MOCK_TOTAL = 35               // 35 MC questions
 const TOUGH_MOCK_SECONDS = 45 * 60  // 45 min — tougher training
 const TOUGH_MOCK_TOTAL = 40         // 40 questions — tougher training
-
-function mockDistribution(total: number): number[] {
-  const base = Math.floor(total / 10)
-  const counts = Array.from({ length: 10 }, () => base)
-  const extra = total - base * 10
-  const order = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-  shuffleInPlace(order)
-  for (let i = 0; i < extra; i++) counts[order[i]!] += 1
-  return counts
-}
-
-function buildMockPaper(byCategory: Record<CategoryId, McQuestion[]>, total: number): McQuestion[] {
-  const dist = mockDistribution(total)
-  const out: McQuestion[] = []
-  CATEGORIES.forEach((c, idx) => {
-    const need = dist[idx]!
-    const pool = byCategory[c.id]
-    const picked = pickRandom(pool, need)
-    out.push(...picked)
-  })
-  shuffleInPlace(out)
-  return out
-}
 
 function formatTime(sec: number): string {
   const m = Math.floor(sec / 60)
@@ -293,9 +270,8 @@ export function MockTestScreen() {
 
   // ── Essay state ───────────────────────────────────────────────────────────
   const [essayDraft, setEssayDraft] = useState('')
-  const [essayPrompt] = useState(
-    state.essayPrompt.trim() || MOCK_ESSAY_PROMPTS[Math.floor(Math.random() * MOCK_ESSAY_PROMPTS.length)],
-  )
+  // Picked fresh on every Start so the same topic doesn't recur across attempts.
+  const [essayPrompt, setEssayPrompt] = useState(() => pickMockEssayPrompt(state.mockTestHistory))
   const [uploadedImage, setUploadedImage] = useState<{ base64: string; mediaType: string; preview: string; isPdf: boolean; fileName: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -467,8 +443,10 @@ export function MockTestScreen() {
       return
     }
     gradingDoneRef.current = false
-    const paper = buildMockPaper(byCat, total)
+    const outcomes = lastOutcomeByQuestion(state.mockTestHistory)
+    const paper = buildMockPaper(byCat, total, outcomes)
     setMockPaper(paper)
+    setEssayPrompt(pickMockEssayPrompt(state.mockTestHistory))
     setMockIdx(0)
     setMockAnswers({})
     setRemaining(seconds)

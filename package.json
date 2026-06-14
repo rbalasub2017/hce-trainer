@@ -10,6 +10,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test:unit": "tsx src/utils/mockSelection.test.ts",
     "test:e2e": "playwright test",
     "start": "npm run build && tsx server/index.ts"
   },
