@@ -25,6 +25,7 @@ dist-ssr
 
 # Playwright
 test-results/
+.e2e/
 playwright-report/
 
 # SQLite WAL journal artifacts

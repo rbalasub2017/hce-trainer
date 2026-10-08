@@ -9,7 +9,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '../data')
 mkdirSync(DATA_DIR, { recursive: true })
 
-const db = new Database(join(DATA_DIR, 'hce_trainer.db'))
+// HCE_DB_PATH lets the e2e suite run against a throwaway copy of the database.
+const db = new Database(process.env.HCE_DB_PATH ?? join(DATA_DIR, 'hce_trainer.db'))
 db.pragma('journal_mode = WAL')
 
 db.exec(`
@@ -56,11 +57,35 @@ db.exec(`
     data TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS progress_archive (
+    profile TEXT NOT NULL,
+    season TEXT NOT NULL,
+    data TEXT NOT NULL,
+    archived_at TEXT NOT NULL,
+    PRIMARY KEY (profile, season)
+  );
+
+  CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `)
+
+// Progress that predates seasons is the 2025-26 season (ILC June 2026).
+db.prepare(`INSERT OR IGNORE INTO app_meta (key, value) VALUES ('current_season', '2025-26')`).run()
 
 // Migrate existing DBs that lack the profile column
 try {
   db.exec(`ALTER TABLE mock_runs ADD COLUMN profile TEXT NOT NULL DEFAULT 'Shyam'`)
+} catch {
+  // Column already exists — ignore
+}
+
+// Migrate existing DBs that lack mock_runs.season. NULL means the current
+// season; runs are stamped with their season when it is archived.
+try {
+  db.exec(`ALTER TABLE mock_runs ADD COLUMN season TEXT`)
 } catch {
   // Column already exists — ignore
 }
@@ -246,10 +271,11 @@ app.get('/api/db/runs/:id', (req: Request, res: Response) => {
   res.json({ ...run, questions: parsed })
 })
 
-// Delete all runs for a profile (used by "Reset All Progress")
+// Delete a profile's current-season runs (used by "Reset All Progress").
+// Archived seasons are kept.
 app.delete('/api/db/runs', (req: Request, res: Response) => {
   const profile = (req.query.profile as string) || 'Shyam'
-  db.prepare('DELETE FROM mock_runs WHERE profile = ?').run(profile)
+  db.prepare('DELETE FROM mock_runs WHERE profile = ? AND season IS NULL').run(profile)
   res.json({ ok: true })
 })
 
@@ -328,10 +354,50 @@ function mergeProgressData(a: ProgressData, b: ProgressData): ProgressData {
   }
 }
 
+function hasProgressData(d: ProgressData): boolean {
+  return (
+    (d.totalQuestionsAnswered ?? 0) > 0 ||
+    (d.totalPracticeSeconds ?? 0) > 0 ||
+    (d.mockTestHistory ?? []).length > 0 ||
+    Object.values(d.categoryProgress ?? {}).some((c) => c.attempted > 0)
+  )
+}
+
+// ── Seasons ─────────────────────────────────────────────────────────────────
+// A season is one HOSA competition year ("2025-26"). Live progress always
+// belongs to the current season; starting a new one copies every profile's
+// progress into progress_archive and empties the live copy. The season start
+// time acts as a floor on every profile's reset epoch, so a device still
+// holding last season's data can't push it into the new one, even for a
+// profile that has no progress row yet.
+const getMeta = db.prepare('SELECT value FROM app_meta WHERE key = ?')
+const setMeta = db.prepare(`
+  INSERT INTO app_meta (key, value) VALUES (?, ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`)
+
+function currentSeason(): string {
+  return (getMeta.get('current_season') as { value: string }).value
+}
+
+function seasonStartedAt(): string | null {
+  return (getMeta.get('season_started_at') as { value: string } | undefined)?.value ?? null
+}
+
+/** "2025-26" → "2026-27" */
+function nextSeason(season: string): string {
+  const start = Number.parseInt(season, 10) + 1
+  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`
+}
+
 app.get('/api/db/progress', (req: Request, res: Response) => {
   const profile = (req.query.profile as string) || 'Shyam'
   const row = db.prepare('SELECT data FROM progress WHERE profile = ?').get(profile) as { data: string } | undefined
-  res.json(row ? JSON.parse(row.data) : null)
+  if (row) { res.json(JSON.parse(row.data)); return }
+  // No live progress this season, but tell devices the season epoch so they
+  // drop anything left over from last season.
+  const started = seasonStartedAt()
+  res.json(started ? emptyProgressData(started) : null)
 })
 
 app.put('/api/db/progress', (req: Request, res: Response) => {
@@ -354,7 +420,8 @@ app.put('/api/db/progress', (req: Request, res: Response) => {
 
   const incoming = data as unknown as ProgressData
   const incomingEpoch = typeof incoming.resetAt === 'string' ? incoming.resetAt : null
-  const storedEpoch = stored && typeof stored.resetAt === 'string' ? stored.resetAt : null
+  const epochs = [stored?.resetAt, seasonStartedAt()].filter((e): e is string => typeof e === 'string')
+  const storedEpoch = epochs.length ? epochs.sort().at(-1)! : null
 
   // Stale push: the client hasn't seen the latest reset yet. Ignore its
   // (pre-reset) data so a reset can't be resurrected; the client catches up on
@@ -374,6 +441,53 @@ app.delete('/api/db/progress', (req: Request, res: Response) => {
   const profile = (req.query.profile as string) || 'Shyam'
   db.prepare('DELETE FROM progress WHERE profile = ?').run(profile)
   res.json({ ok: true })
+})
+
+// Current season plus the past seasons this profile has archived progress for
+app.get('/api/db/seasons', (req: Request, res: Response) => {
+  const profile = (req.query.profile as string) || 'Shyam'
+  const past = db.prepare('SELECT season FROM progress_archive WHERE profile = ? ORDER BY season DESC')
+    .all(profile) as Array<{ season: string }>
+  res.json({ current: currentSeason(), past: past.map((r) => r.season) })
+})
+
+// One profile's progress as it stood when a past season was archived
+app.get('/api/db/seasons/:season/progress', (req: Request, res: Response) => {
+  const profile = (req.query.profile as string) || 'Shyam'
+  const row = db.prepare('SELECT data FROM progress_archive WHERE profile = ? AND season = ?')
+    .get(profile, req.params.season) as { data: string } | undefined
+  if (!row) { res.status(404).json({ error: 'Not found' }); return }
+  res.json(JSON.parse(row.data))
+})
+
+// Start the next season for every profile. `from` must name the current
+// season, so a double-click or a stale tab can't archive twice.
+app.post('/api/db/seasons', (req: Request, res: Response) => {
+  const { from } = req.body as { from?: string }
+  const season = currentSeason()
+  if (from !== season) {
+    res.status(409).json({ error: `The current season is ${season}`, current: season })
+    return
+  }
+  const to = nextSeason(season)
+  const startedAt = new Date().toISOString()
+  const rows = db.prepare('SELECT profile, data FROM progress').all() as Array<{ profile: string; data: string }>
+  const archived: string[] = []
+  db.transaction(() => {
+    for (const row of rows) {
+      const data = JSON.parse(row.data) as ProgressData
+      if (hasProgressData(data)) {
+        db.prepare('INSERT INTO progress_archive (profile, season, data, archived_at) VALUES (?, ?, ?, ?)')
+          .run(row.profile, season, row.data, startedAt)
+        archived.push(row.profile)
+      }
+      upsertProgress.run(row.profile, JSON.stringify(emptyProgressData(startedAt)), startedAt)
+    }
+    db.prepare('UPDATE mock_runs SET season = ? WHERE season IS NULL').run(season)
+    setMeta.run('current_season', to)
+    setMeta.run('season_started_at', startedAt)
+  })()
+  res.json({ ok: true, archived: season, current: to, profiles: archived })
 })
 
 // ---------- Shared question bank (no profile — content is shared across all users) ----------

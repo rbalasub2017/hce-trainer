@@ -92,4 +92,11 @@ export type ProgressSlice = Pick<
  *  the reset epoch that guards against stale devices resurrecting wiped data. */
 export type SyncedProgress = ProgressSlice & { resetAt?: string | null }
 
+/** The current HOSA season (e.g. "2026-27") and the past seasons a profile
+ *  has archived progress for, newest first. */
+export interface SeasonInfo {
+  current: string
+  past: string[]
+}
+
 export type ScreenId = 'setup' | 'practice' | 'mock' | 'essay' | 'dashboard' | 'reference' | 'settings'

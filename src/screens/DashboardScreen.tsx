@@ -3,8 +3,15 @@ import { CATEGORIES, PROFILES, type ProfileId } from '../constants'
 import { useTrainer, PARENT_PROFILE_ID } from '../context/TrainerContext'
 import { categoryName } from '../prompts'
 import { defaultPersistedState, loadState } from '../storage'
-import { deleteAllRunsFromBackend, fetchProgressFromBackend, resetProgressOnBackend } from '../utils/db'
-import type { CategoryProgress, EssayGrade, MockTestRun, PersistedState, QuestionResult } from '../types'
+import {
+  deleteAllRunsFromBackend,
+  fetchProgressFromBackend,
+  fetchSeasonProgress,
+  fetchSeasons,
+  resetProgressOnBackend,
+  startNewSeason,
+} from '../utils/db'
+import type { CategoryProgress, EssayGrade, MockTestRun, PersistedState, QuestionResult, SeasonInfo } from '../types'
 
 function pct(p: CategoryProgress): number {
   return p.attempted > 0 ? Math.round((p.correct / p.attempted) * 100) : 0
@@ -577,6 +584,99 @@ function DashboardView({
   )
 }
 
+/** "2025-26" → "2026-27" (mirrors nextSeason in server/index.ts) */
+function nextSeason(season: string): string {
+  const start = Number.parseInt(season, 10) + 1
+  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`
+}
+
+function SeasonBar({
+  info,
+  selected,
+  onSelect,
+  onStartNew,
+}: {
+  info: SeasonInfo
+  selected: string | null
+  onSelect: (season: string | null) => void
+  onStartNew?: () => Promise<boolean>
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const pill = (active: boolean) =>
+    `rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+      active ? 'bg-[#003366] text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+    }`
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-slate-500">Season:</span>
+        <button type="button" onClick={() => onSelect(null)} className={pill(selected === null)}>
+          {info.current} (current)
+        </button>
+        {info.past.map((season) => (
+          <button key={season} type="button" onClick={() => onSelect(season)} className={pill(selected === season)}>
+            {season}
+          </button>
+        ))}
+        {selected !== null && (
+          <span className="ml-2 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+            Past season — read-only
+          </span>
+        )}
+        {onStartNew && selected === null && (
+          <button
+            type="button"
+            onClick={() => { setError(null); setConfirmOpen(true) }}
+            className="ml-auto rounded-lg border border-[#003366]/40 bg-white px-4 py-1.5 text-sm font-semibold text-[#003366] hover:bg-slate-50"
+          >
+            Start {nextSeason(info.current)} season
+          </button>
+        )}
+      </div>
+
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h4 className="text-lg font-semibold text-slate-900">Start the {nextSeason(info.current)} season?</h4>
+            <p className="mt-2 text-sm text-slate-600">
+              Every student&apos;s {info.current} scores, practice totals, and mock-test history are archived and stay
+              viewable under &ldquo;{info.current}&rdquo;. The {nextSeason(info.current)} season starts from zero on all
+              devices. Questions, starred items, and essay drafts are kept.
+            </p>
+            {error && <p className="mt-3 text-sm font-medium text-red-700">{error}</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium"
+                onClick={() => setConfirmOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                className="rounded-lg bg-[#003366] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                onClick={async () => {
+                  setBusy(true)
+                  const ok = await onStartNew!()
+                  setBusy(false)
+                  if (ok) setConfirmOpen(false)
+                  else setError('The server did not start the new season. Reload the page and try again.')
+                }}
+              >
+                Start {nextSeason(info.current)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 export function DashboardScreen() {
   const { activeProfile, state } = useTrainer()
   const isParent = activeProfile === PARENT_PROFILE_ID
@@ -584,6 +684,10 @@ export function DashboardScreen() {
 // Parent view: pick which student to view (defaults to first student)
   const [viewingProfileId, setViewingProfileId] = useState<ProfileId>(STUDENT_PROFILES[0]!.id)
   const viewingLabel = isParent ? STUDENT_PROFILES.find((p) => p.id === viewingProfileId)?.label : null
+  const seasonProfile = isParent ? viewingProfileId : activeProfile
+
+  // Bumped after a new season starts so season info and progress re-fetch.
+  const [seasonVersion, setSeasonVersion] = useState(0)
 
   // Parent view: the student usually practices in a different browser, so
   // their progress lives on the server — fetch it there and overlay it on
@@ -598,11 +702,40 @@ export function DashboardScreen() {
       setParentView({ profile: viewingProfileId, state: { ...loadState(viewingProfileId), ...remote } })
     })
     return () => { cancelled = true }
-  }, [isParent, viewingProfileId])
+  }, [isParent, viewingProfileId, seasonVersion])
 
-  const viewState = isParent
+  // Seasons: the current one plus any past seasons archived for this profile.
+  // Fetched results are tagged with their profile (and season) like parentView.
+  const [seasons, setSeasons] = useState<{ profile: ProfileId; info: SeasonInfo } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void fetchSeasons(seasonProfile).then((info) => {
+      if (!cancelled && info) setSeasons({ profile: seasonProfile, info })
+    })
+    return () => { cancelled = true }
+  }, [seasonProfile, seasonVersion])
+  const seasonInfo = seasons?.profile === seasonProfile ? seasons.info : null
+
+  const [selected, setSelected] = useState<{ profile: ProfileId; season: string } | null>(null)
+  const pastSeason = selected?.profile === seasonProfile ? selected.season : null
+
+  const [pastView, setPastView] = useState<{ profile: ProfileId; season: string; state: PersistedState } | null>(null)
+  useEffect(() => {
+    if (!pastSeason) return
+    let cancelled = false
+    void fetchSeasonProgress(seasonProfile, pastSeason).then((archived) => {
+      if (cancelled || !archived) return
+      setPastView({ profile: seasonProfile, season: pastSeason, state: { ...defaultPersistedState(), ...archived } })
+    })
+    return () => { cancelled = true }
+  }, [seasonProfile, pastSeason])
+
+  const currentState = isParent
     ? (parentView?.profile === viewingProfileId ? parentView.state : loadState(viewingProfileId))
     : state
+  const viewState = pastSeason
+    ? (pastView?.profile === seasonProfile && pastView.season === pastSeason ? pastView.state : defaultPersistedState())
+    : currentState
 
   return (
     <div className="space-y-8">
@@ -640,12 +773,25 @@ export function DashboardScreen() {
         </div>
       )}
 
+      {seasonInfo && (
+        <SeasonBar
+          info={seasonInfo}
+          selected={pastSeason}
+          onSelect={(season) => setSelected(season ? { profile: seasonProfile, season } : null)}
+          onStartNew={isParent ? async () => {
+            const started = await startNewSeason(seasonInfo.current)
+            if (started) setSeasonVersion((v) => v + 1)
+            return started !== null
+          } : undefined}
+        />
+      )}
 
       <DashboardView
+        key={pastSeason ?? 'current'}
         viewState={viewState}
-        isReadOnly={isParent}
+        isReadOnly={isParent || pastSeason !== null}
         studentLabel={isParent ? (viewingLabel ?? null) : null}
-        onReset={isParent ? () => {
+        onReset={isParent && pastSeason === null ? () => {
           void resetProgressOnBackend(viewingProfileId)
           void deleteAllRunsFromBackend(viewingProfileId)
           setParentView({ profile: viewingProfileId, state: defaultPersistedState() })

@@ -1,4 +1,4 @@
-import type { McQuestion, MockTestRun, ProgressSlice, SyncedProgress } from '../types'
+import type { McQuestion, MockTestRun, ProgressSlice, SeasonInfo, SyncedProgress } from '../types'
 import type { ProfileId } from '../constants'
 import { normalizeProgressSlice } from '../storage'
 
@@ -88,6 +88,46 @@ export async function resetProgressOnBackend(profile: ProfileId): Promise<void> 
     })
   } catch {
     // Best-effort
+  }
+}
+
+/** The current season and the profile's archived past seasons. Returns null
+ *  when the server is unreachable. */
+export async function fetchSeasons(profile: ProfileId): Promise<SeasonInfo | null> {
+  try {
+    const res = await fetch(`/api/db/seasons?profile=${encodeURIComponent(profile)}`)
+    if (!res.ok) return null
+    return await res.json() as SeasonInfo
+  } catch {
+    return null
+  }
+}
+
+/** A profile's progress as archived at the end of a past season. */
+export async function fetchSeasonProgress(profile: ProfileId, season: string): Promise<SyncedProgress | null> {
+  try {
+    const res = await fetch(`/api/db/seasons/${encodeURIComponent(season)}/progress?profile=${encodeURIComponent(profile)}`)
+    if (!res.ok) return null
+    return normalizeProgressSlice(await res.json() as Partial<SyncedProgress>)
+  } catch {
+    return null
+  }
+}
+
+/** Archive the current season for every profile and start the next one.
+ *  `from` must be the current season. Returns the new season, or null if the
+ *  server refused (season already advanced) or is unreachable. */
+export async function startNewSeason(from: string): Promise<string | null> {
+  try {
+    const res = await fetch('/api/db/seasons', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from }),
+    })
+    if (!res.ok) return null
+    return (await res.json() as { current: string }).current
+  } catch {
+    return null
   }
 }
 

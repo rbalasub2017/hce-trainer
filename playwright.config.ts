@@ -4,6 +4,8 @@ import { defineConfig } from '@playwright/test'
 // collide with a dev/production server on 3001. The server serves the built
 // frontend from dist/ — run `npm run build` before `npm run test:e2e`.
 // Started without ANTHROPIC_API_KEY on purpose: AI tests mock the proxy route.
+// The server runs on a fresh copy of the database (in .e2e/, gitignored) so
+// tests that write progress or start a season never touch data/hce_trainer.db.
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -16,7 +18,11 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'PORT=3101 npx tsx server/index.ts',
+    command:
+      'mkdir -p .e2e && rm -f .e2e/hce_trainer.db* && ' +
+      // SQLite backup (not cp) so pages still in the WAL are included
+      `node -e "new (require('better-sqlite3'))('data/hce_trainer.db').backup('.e2e/hce_trainer.db')" && ` +
+      'HCE_DB_PATH=.e2e/hce_trainer.db PORT=3101 npx tsx server/index.ts',
     url: 'http://localhost:3101/api/anthropic/status',
     reuseExistingServer: true,
     timeout: 30_000,
