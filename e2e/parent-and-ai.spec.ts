@@ -31,7 +31,8 @@ test('settings shows green state when the server reports a configured key', asyn
   )
   await goToParent(page)
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await expect(page.getByText('Configured on the server')).toBeVisible()
+  // Case-sensitive regex: the header's "…is configured on the server…" must not match
+  await expect(page.getByText(/Configured on the server/)).toBeVisible()
 })
 
 test('no API key ever touches browser storage', async ({ page }) => {
@@ -98,6 +99,14 @@ test.describe('cross-device progress sync', () => {
     await page.getByRole('button', { name: 'Progress Dashboard', exact: true }).click()
     await page.getByRole('button', { name: 'Test', exact: true }).click()
     await expect(page.locator('li', { hasText: 'Total questions answered:' })).toContainText('5')
+
+    // Coverage: the 5 drilled questions count as seen in Diagnostics, out of
+    // that category's bank, and nothing elsewhere is seen
+    const bankSize = ((await (await request.get('/api/db/questions/diagnostics')).json()) as unknown[]).length
+    const coverage = page.getByRole('region', { name: 'Question bank coverage' })
+    await expect(coverage.locator('tr', { hasText: 'Diagnostics' })).toContainText(`5/${bankSize}`)
+    await expect(coverage.locator('tr', { hasText: 'Therapeutics' })).toContainText(/^Therapeutics0\//)
+    await expect(page.locator('li', { hasText: 'Question bank seen:' })).toContainText(/5 of \d+/)
   })
 })
 

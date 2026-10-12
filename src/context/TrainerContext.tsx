@@ -10,7 +10,7 @@ import {
 import type { CategoryId, ProfileId } from '../constants'
 import { CATEGORIES } from '../constants'
 export const PARENT_PROFILE_ID: ProfileId = 'Parent'
-import { loadState, saveState, defaultPersistedState, progressSlice, hasProgress, mergeProgress } from '../storage'
+import { loadState, saveState, defaultPersistedState, progressSlice, hasProgress, mergeProgress, addCoverage } from '../storage'
 import type { CategoryPersisted, McQuestion, MockTestRun, PersistedState } from '../types'
 import { fetchProgressFromBackend, fetchQuestionsFromServer, saveProgressToBackend, saveQuestionsToServer } from '../utils/db'
 
@@ -21,6 +21,7 @@ type TrainerContextValue = {
   setQuestionsForCategory: (id: CategoryId, questions: McQuestion[]) => void
   recordDrillSession: (id: CategoryId, correct: number, attempted: number) => void
   recordMockResults: (byCategory: Record<CategoryId, { correct: number; attempted: number }>) => void
+  recordAnswers: (answers: Array<{ id: string; correct: boolean }>) => void
   addPracticeTime: (seconds: number) => void
   addQuestionsAnswered: (n: number) => void
   setMockHighScore: (pct: number) => void
@@ -126,6 +127,8 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
             mockTestHistory: [],
             totalPracticeSeconds: 0,
             totalQuestionsAnswered: 0,
+            seenQuestionIds: [],
+            correctQuestionIds: [],
             resetAt: remoteEpoch,
           }
         }
@@ -195,6 +198,15 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
     },
     [],
   )
+
+  const recordAnswers = useCallback((answers: Array<{ id: string; correct: boolean }>) => {
+    if (!answers.length) return
+    setState((s) => {
+      const next = addCoverage(s.seenQuestionIds, s.correctQuestionIds, answers)
+      if (next.seenQuestionIds === s.seenQuestionIds && next.correctQuestionIds === s.correctQuestionIds) return s
+      return { ...s, ...next }
+    })
+  }, [])
 
   const addPracticeTime = useCallback((seconds: number) => {
     setState((s) => ({
@@ -291,6 +303,7 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
       setQuestionsForCategory,
       recordDrillSession,
       recordMockResults,
+      recordAnswers,
       addPracticeTime,
       addQuestionsAnswered,
       setMockHighScore,
@@ -308,6 +321,7 @@ export function TrainerProvider({ profile, children }: { profile: ProfileId; chi
       setQuestionsForCategory,
       recordDrillSession,
       recordMockResults,
+      recordAnswers,
       addPracticeTime,
       addQuestionsAnswered,
       setMockHighScore,

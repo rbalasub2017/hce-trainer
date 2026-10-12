@@ -32,6 +32,8 @@ export function defaultPersistedState(): PersistedState {
     mockTestHistory: [],
     totalPracticeSeconds: 0,
     totalQuestionsAnswered: 0,
+    seenQuestionIds: [],
+    correctQuestionIds: [],
     starredQuestionIds: [],
     essayPrompt: '',
     essayDraft: '',
@@ -78,6 +80,8 @@ export function loadState(profile: ProfileId): PersistedState {
       // Backfill id for runs created before this field was added
       id: r.id ?? crypto.randomUUID(),
     }))
+    merged.seenQuestionIds = parsed.seenQuestionIds ?? []
+    merged.correctQuestionIds = parsed.correctQuestionIds ?? []
     merged.starredQuestionIds = parsed.starredQuestionIds ?? []
     merged.essayPrompt = parsed.essayPrompt ?? ''
     merged.essayDraft = parsed.essayDraft ?? ''
@@ -98,6 +102,8 @@ export function progressSlice(state: PersistedState): ProgressSlice {
     mockTestHistory: state.mockTestHistory,
     totalPracticeSeconds: state.totalPracticeSeconds,
     totalQuestionsAnswered: state.totalQuestionsAnswered,
+    seenQuestionIds: state.seenQuestionIds,
+    correctQuestionIds: state.correctQuestionIds,
   }
 }
 
@@ -106,6 +112,7 @@ export function hasProgress(p: ProgressSlice): boolean {
     p.totalQuestionsAnswered > 0 ||
     p.totalPracticeSeconds > 0 ||
     p.mockTestHistory.length > 0 ||
+    p.seenQuestionIds.length > 0 ||
     Object.values(p.categoryProgress).some((c) => c.attempted > 0)
   )
 }
@@ -129,6 +136,8 @@ export function normalizeProgressSlice(raw: Partial<SyncedProgress>): SyncedProg
     mockTestHistory: raw.mockTestHistory ?? [],
     totalPracticeSeconds: raw.totalPracticeSeconds ?? 0,
     totalQuestionsAnswered: raw.totalQuestionsAnswered ?? 0,
+    seenQuestionIds: raw.seenQuestionIds ?? [],
+    correctQuestionIds: raw.correctQuestionIds ?? [],
     resetAt: raw.resetAt ?? null,
   }
 }
@@ -173,6 +182,31 @@ export function mergeProgress(a: ProgressSlice, b: ProgressSlice): ProgressSlice
     mockTestHistory,
     totalPracticeSeconds: Math.max(a.totalPracticeSeconds, b.totalPracticeSeconds),
     totalQuestionsAnswered: Math.max(a.totalQuestionsAnswered, b.totalQuestionsAnswered),
+    seenQuestionIds: unionIds(a.seenQuestionIds, b.seenQuestionIds),
+    correctQuestionIds: unionIds(a.correctQuestionIds, b.correctQuestionIds),
+  }
+}
+
+function unionIds(a: string[] | undefined, b: string[] | undefined): string[] {
+  return [...new Set([...(a ?? []), ...(b ?? [])])]
+}
+
+/** Add one batch of answers to the coverage sets. Unchanged arrays are
+ *  returned as-is so a no-op batch doesn't trigger a progress push. */
+export function addCoverage(
+  seen: string[],
+  correct: string[],
+  answers: Array<{ id: string; correct: boolean }>,
+): { seenQuestionIds: string[]; correctQuestionIds: string[] } {
+  const seenSet = new Set(seen)
+  const correctSet = new Set(correct)
+  for (const a of answers) {
+    seenSet.add(a.id)
+    if (a.correct) correctSet.add(a.id)
+  }
+  return {
+    seenQuestionIds: seenSet.size === seen.length ? seen : [...seenSet],
+    correctQuestionIds: correctSet.size === correct.length ? correct : [...correctSet],
   }
 }
 
