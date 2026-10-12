@@ -31,7 +31,8 @@ test('settings shows green state when the server reports a configured key', asyn
   )
   await goToParent(page)
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await expect(page.getByText('Configured on the server')).toBeVisible()
+  // Case-sensitive regex: the header's "…is configured on the server…" must not match
+  await expect(page.getByText(/Configured on the server/)).toBeVisible()
 })
 
 test('no API key ever touches browser storage', async ({ page }) => {
