@@ -81,6 +81,7 @@ export function PracticeScreen() {
   const {
     state,
     recordDrillSession,
+    recordAnswers,
     addPracticeTime,
     addQuestionsAnswered,
     syncQuestionsFromServer,
@@ -145,6 +146,11 @@ export function PracticeScreen() {
     addPracticeTime(elapsed)
     addQuestionsAnswered(drillBatch.length)
     recordDrillSession(drillCategoryId, correct, drillBatch.length)
+    recordAnswers(
+      drillBatch
+        .filter((q) => drillAnswers[q.id] !== undefined)
+        .map((q) => ({ id: q.id, correct: drillAnswers[q.id] === q.correct })),
+    )
   }
 
 
@@ -191,6 +197,7 @@ export function PracticeScreen() {
       },
     }))
     recordDrillSession(currentAdaptiveQ.categoryId, correct ? 1 : 0, 1)
+    recordAnswers([{ id: currentAdaptiveQ.id, correct }])
     addQuestionsAnswered(1)
     setAdaptivePhase('answered')
   }, [
@@ -198,6 +205,7 @@ export function PracticeScreen() {
     currentAdaptiveQ,
     adaptiveSessionTotal,
     recordDrillSession,
+    recordAnswers,
     addQuestionsAnswered,
   ])
 

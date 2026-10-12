@@ -302,6 +302,8 @@ interface ProgressData {
   mockTestHistory: MockRun[]
   totalPracticeSeconds: number
   totalQuestionsAnswered: number
+  seenQuestionIds?: string[]
+  correctQuestionIds?: string[]
   resetAt?: string | null
 }
 
@@ -312,6 +314,8 @@ function emptyProgressData(resetAt: string | null): ProgressData {
     mockTestHistory: [],
     totalPracticeSeconds: 0,
     totalQuestionsAnswered: 0,
+    seenQuestionIds: [],
+    correctQuestionIds: [],
     resetAt,
   }
 }
@@ -350,6 +354,8 @@ function mergeProgressData(a: ProgressData, b: ProgressData): ProgressData {
     mockTestHistory,
     totalPracticeSeconds: Math.max(a.totalPracticeSeconds ?? 0, b.totalPracticeSeconds ?? 0),
     totalQuestionsAnswered: Math.max(a.totalQuestionsAnswered ?? 0, b.totalQuestionsAnswered ?? 0),
+    seenQuestionIds: [...new Set([...(a.seenQuestionIds ?? []), ...(b.seenQuestionIds ?? [])])],
+    correctQuestionIds: [...new Set([...(a.correctQuestionIds ?? []), ...(b.correctQuestionIds ?? [])])],
     resetAt: epochs.length ? epochs.sort().at(-1) : null,
   }
 }
@@ -359,6 +365,7 @@ function hasProgressData(d: ProgressData): boolean {
     (d.totalQuestionsAnswered ?? 0) > 0 ||
     (d.totalPracticeSeconds ?? 0) > 0 ||
     (d.mockTestHistory ?? []).length > 0 ||
+    (d.seenQuestionIds ?? []).length > 0 ||
     Object.values(d.categoryProgress ?? {}).some((c) => c.attempted > 0)
   )
 }

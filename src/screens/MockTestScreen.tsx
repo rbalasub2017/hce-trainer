@@ -241,6 +241,7 @@ export function MockTestScreen() {
     activeProfile,
     state,
     recordMockResults,
+    recordAnswers,
     addPracticeTime,
     addQuestionsAnswered,
     setMockHighScore,
@@ -340,6 +341,11 @@ export function MockTestScreen() {
     setMockByCategory(byCat)
     setMockQuestionResults(questionResults)
     recordMockResults(byCat)
+    recordAnswers(
+      questionResults
+        .filter((r) => r.userAnswer !== null)
+        .map((r) => ({ id: r.questionId, correct: r.userAnswer === r.correct })),
+    )
     addQuestionsAnswered(total)
     addPracticeTime(elapsed)
     setMockHighScore(pct)
@@ -395,7 +401,7 @@ export function MockTestScreen() {
     } else {
       await saveRunToBackend(run, profile)
     }
-  }, [recordMockResults, addQuestionsAnswered, addPracticeTime, setMockHighScore, addMockTestRun, updateMockTestRun, essayPrompt])
+  }, [recordMockResults, recordAnswers, addQuestionsAnswered, addPracticeTime, setMockHighScore, addMockTestRun, updateMockTestRun, essayPrompt])
 
   // ── Timer ─────────────────────────────────────────────────────────────────
   useEffect(() => {

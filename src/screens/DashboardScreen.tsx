@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CATEGORIES, PROFILES, type ProfileId } from '../constants'
+import { CATEGORIES, PROFILES, type CategoryId, type ProfileId } from '../constants'
 import { useTrainer, PARENT_PROFILE_ID } from '../context/TrainerContext'
 import { categoryName } from '../prompts'
 import { defaultPersistedState, loadState } from '../storage'
 import {
   deleteAllRunsFromBackend,
   fetchProgressFromBackend,
+  fetchQuestionsFromServer,
   fetchSeasonProgress,
   fetchSeasons,
   resetProgressOnBackend,
@@ -120,6 +121,107 @@ function MockHistoryChart({ runs }: { runs: MockTestRun[] }) {
         </g>
       ))}
     </svg>
+  )
+}
+
+type QuestionBankIds = Record<CategoryId, string[]>
+
+interface CoverageRow {
+  id: CategoryId
+  name: string
+  bank: number
+  seen: number
+  correct: number
+}
+
+/** Per-category coverage of the current question bank. Answers recorded in
+ *  mock-test history count too, which backfills runs taken before per-question
+ *  tracking existed. IDs no longer in the bank are ignored. */
+function coverageRows(viewState: PersistedState, bank: QuestionBankIds): CoverageRow[] {
+  const seen = new Set(viewState.seenQuestionIds)
+  const correct = new Set(viewState.correctQuestionIds)
+  for (const run of viewState.mockTestHistory) {
+    for (const q of run.questions ?? []) {
+      if (q.userAnswer === null) continue
+      seen.add(q.questionId)
+      if (q.userAnswer === q.correct) correct.add(q.questionId)
+    }
+  }
+  return CATEGORIES.map((c) => {
+    const ids = bank[c.id]
+    return {
+      id: c.id,
+      name: c.name,
+      bank: ids.length,
+      seen: ids.filter((id) => seen.has(id)).length,
+      correct: ids.filter((id) => correct.has(id)).length,
+    }
+  })
+}
+
+function share(n: number, of: number): number {
+  return of > 0 ? Math.round((n / of) * 100) : 0
+}
+
+function CoverageSection({ rows }: { rows: CoverageRow[] }) {
+  const total = rows.reduce(
+    (t, r) => ({ bank: t.bank + r.bank, seen: t.seen + r.seen, correct: t.correct + r.correct }),
+    { bank: 0, seen: 0, correct: 0 },
+  )
+  return (
+    <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm" aria-label="Question bank coverage">
+      <div className="flex flex-wrap items-end justify-between gap-2 px-4 pt-4">
+        <div>
+          <h3 className="text-sm font-semibold text-[#003366]">Question bank coverage</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            How much of the bank has been answered at least once, and answered correctly at least once.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-slate-500">
+          <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#003366]" />Got right</span>
+          <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#003366]/35" />Seen, not yet right</span>
+          <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-slate-100 ring-1 ring-slate-200" />Not seen</span>
+        </div>
+      </div>
+      <table className="mt-3 min-w-full text-left text-sm">
+        <thead className="border-y border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-4 py-3">Category</th>
+            <th className="px-4 py-3">Seen</th>
+            <th className="px-4 py-3">Got right</th>
+            <th className="px-4 py-3">Not seen</th>
+            <th className="w-1/3 px-4 py-3">Coverage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...rows, { id: 'all', name: 'All categories', ...total }].map((r) => {
+            const isTotal = r.id === 'all'
+            return (
+              <tr key={r.id} className={`border-b border-slate-100 last:border-0 ${isTotal ? 'bg-slate-50 font-semibold' : ''}`}>
+                <td className={`px-4 py-3 ${isTotal ? 'text-[#003366]' : 'font-medium text-slate-900'}`}>{r.name}</td>
+                <td className="px-4 py-3 tabular-nums text-slate-700">
+                  {r.seen}/{r.bank} <span className="text-slate-400">({share(r.seen, r.bank)}%)</span>
+                </td>
+                <td className="px-4 py-3 tabular-nums text-slate-700">
+                  {r.correct} <span className="text-slate-400">({share(r.correct, r.bank)}%)</span>
+                </td>
+                <td className="px-4 py-3 tabular-nums text-slate-700">{r.bank - r.seen}</td>
+                <td className="px-4 py-3">
+                  <div
+                    className="flex h-2.5 w-full min-w-24 overflow-hidden rounded-full bg-slate-100"
+                    role="img"
+                    aria-label={`${r.name}: ${r.correct} right, ${r.seen - r.correct} seen but not yet right, ${r.bank - r.seen} not seen`}
+                  >
+                    <div className="bg-[#003366]" style={{ width: `${(r.correct / Math.max(1, r.bank)) * 100}%` }} />
+                    <div className="bg-[#003366]/35" style={{ width: `${((r.seen - r.correct) / Math.max(1, r.bank)) * 100}%` }} />
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </section>
   )
 }
 
@@ -341,11 +443,13 @@ const STUDENT_PROFILES = PROFILES.filter((p) => p.id !== PARENT_PROFILE_ID)
 
 function DashboardView({
   viewState,
+  bank,
   isReadOnly,
   onReset,
   studentLabel,
 }: {
   viewState: PersistedState
+  bank: QuestionBankIds | null
   isReadOnly: boolean
   onReset?: () => void
   studentLabel?: string | null
@@ -372,6 +476,9 @@ function DashboardView({
     () => CATEGORIES.map((c) => pct(viewState.categoryProgress[c.id])),
     [viewState.categoryProgress],
   )
+
+  const coverage = useMemo(() => (bank ? coverageRows(viewState, bank) : null), [viewState, bank])
+  const coverageTotal = coverage?.reduce((t, r) => ({ bank: t.bank + r.bank, seen: t.seen + r.seen }), { bank: 0, seen: 0 })
 
   const focus = useMemo(() => {
     const sorted = [...rows].sort((a, b) => {
@@ -411,6 +518,12 @@ function DashboardView({
               <span className="font-medium text-slate-900">Mock test high score:</span>{' '}
               {viewState.mockTestHighScore}%
             </li>
+            {coverageTotal && coverageTotal.bank > 0 && (
+              <li>
+                <span className="font-medium text-slate-900">Question bank seen:</span>{' '}
+                {coverageTotal.seen} of {coverageTotal.bank} ({share(coverageTotal.seen, coverageTotal.bank)}%)
+              </li>
+            )}
           </ul>
         </div>
       </section>
@@ -502,6 +615,8 @@ function DashboardView({
           </tbody>
         </table>
       </section>
+
+      {coverage && coverage.some((r) => r.bank > 0) && <CoverageSection rows={coverage} />}
 
       <section className="rounded-xl border border-[#CC0000]/30 bg-red-50/40 p-4 md:p-6">
         <h3 className="text-lg font-semibold text-[#003366]">Focus Zone</h3>
@@ -730,6 +845,23 @@ export function DashboardScreen() {
     return () => { cancelled = true }
   }, [seasonProfile, pastSeason])
 
+  // The current question bank (IDs only), for coverage. The server copy is the
+  // authority; this browser's local questions are the offline fallback.
+  const [bank, setBank] = useState<QuestionBankIds | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all(CATEGORIES.map((c) => fetchQuestionsFromServer(c.id))).then((fetched) => {
+      if (cancelled) return
+      const ids = {} as QuestionBankIds
+      CATEGORIES.forEach((c, i) => {
+        ids[c.id] = (fetched[i] ?? state.categories[c.id].questions).map((q) => q.id)
+      })
+      setBank(ids)
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once; local questions are only a fallback
+  }, [])
+
   const currentState = isParent
     ? (parentView?.profile === viewingProfileId ? parentView.state : loadState(viewingProfileId))
     : state
@@ -789,6 +921,7 @@ export function DashboardScreen() {
       <DashboardView
         key={pastSeason ?? 'current'}
         viewState={viewState}
+        bank={bank}
         isReadOnly={isParent || pastSeason !== null}
         studentLabel={isParent ? (viewingLabel ?? null) : null}
         onReset={isParent && pastSeason === null ? () => {

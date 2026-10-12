@@ -98,6 +98,14 @@ test.describe('cross-device progress sync', () => {
     await page.getByRole('button', { name: 'Progress Dashboard', exact: true }).click()
     await page.getByRole('button', { name: 'Test', exact: true }).click()
     await expect(page.locator('li', { hasText: 'Total questions answered:' })).toContainText('5')
+
+    // Coverage: the 5 drilled questions count as seen in Diagnostics, out of
+    // that category's bank, and nothing elsewhere is seen
+    const bankSize = ((await (await request.get('/api/db/questions/diagnostics')).json()) as unknown[]).length
+    const coverage = page.getByRole('region', { name: 'Question bank coverage' })
+    await expect(coverage.locator('tr', { hasText: 'Diagnostics' })).toContainText(`5/${bankSize}`)
+    await expect(coverage.locator('tr', { hasText: 'Therapeutics' })).toContainText(/^Therapeutics0\//)
+    await expect(page.locator('li', { hasText: 'Question bank seen:' })).toContainText(/5 of \d+/)
   })
 })
 

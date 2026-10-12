@@ -71,6 +71,11 @@ export interface PersistedState {
   mockTestHistory: MockTestRun[]
   totalPracticeSeconds: number
   totalQuestionsAnswered: number
+  /** Bank question IDs the student has answered at least once (drill,
+   *  adaptive, or mock). Grows only, so it merges across devices as a union. */
+  seenQuestionIds: string[]
+  /** Bank question IDs the student has answered correctly at least once. */
+  correctQuestionIds: string[]
   starredQuestionIds: string[]
   essayPrompt: string
   essayDraft: string
@@ -85,7 +90,13 @@ export interface PersistedState {
  *  progress earned in one browser is visible from any other device. */
 export type ProgressSlice = Pick<
   PersistedState,
-  'categoryProgress' | 'mockTestHighScore' | 'mockTestHistory' | 'totalPracticeSeconds' | 'totalQuestionsAnswered'
+  | 'categoryProgress'
+  | 'mockTestHighScore'
+  | 'mockTestHistory'
+  | 'totalPracticeSeconds'
+  | 'totalQuestionsAnswered'
+  | 'seenQuestionIds'
+  | 'correctQuestionIds'
 >
 
 /** What actually crosses the wire to/from the server: the progress slice plus
